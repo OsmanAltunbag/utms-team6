@@ -1,0 +1,35 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Tests (not needed in production image)
+tests/
+pytest.ini
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Git / IDE
+.git/
+.gitignore
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Alembic offline SQL output
+*.sql
