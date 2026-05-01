@@ -1,6 +1,13 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import bcrypt as _bcrypt_mod
+
+# passlib 1.7.4 tries to read bcrypt.__about__.__version__ which was removed
+# in bcrypt 4.1.  Inject a shim so the AttributeError warning is suppressed.
+if not hasattr(_bcrypt_mod, "__about__"):
+    _bcrypt_mod.__about__ = type("__about__", (), {"__version__": _bcrypt_mod.__version__})()
+
 from fastapi import HTTPException, status
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -19,15 +26,6 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_ctx.verify(plain, hashed)
 
 
-def _private_key() -> str:
-    # Env vars may store newlines as literal \n
-    return settings.JWT_PRIVATE_KEY.replace("\\n", "\n")
-
-
-def _public_key() -> str:
-    return settings.JWT_PUBLIC_KEY.replace("\\n", "\n")
-
-
 def create_access_token(user_id: uuid.UUID, role: UserRole, jti: str) -> str:
     now = datetime.now(timezone.utc)
     expire = now + timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -39,7 +37,7 @@ def create_access_token(user_id: uuid.UUID, role: UserRole, jti: str) -> str:
         "exp": expire,
         "type": "access",
     }
-    return jwt.encode(payload, _private_key(), algorithm=settings.JWT_ALGORITHM)
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
 def create_refresh_token(user_id: uuid.UUID, jti: str) -> str:
@@ -52,7 +50,7 @@ def create_refresh_token(user_id: uuid.UUID, jti: str) -> str:
         "exp": expire,
         "type": "refresh",
     }
-    return jwt.encode(payload, _private_key(), algorithm=settings.JWT_ALGORITHM)
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
 def decode_token(token: str) -> dict:
@@ -60,7 +58,7 @@ def decode_token(token: str) -> dict:
     try:
         payload = jwt.decode(
             token,
-            _public_key(),
+            settings.JWT_SECRET_KEY,
             algorithms=[settings.JWT_ALGORITHM],
         )
         return payload
