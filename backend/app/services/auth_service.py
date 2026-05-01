@@ -76,8 +76,9 @@ class AuthService:
         access_token = create_access_token(user.id, user.role, access_jti)
         refresh_token = create_refresh_token(user.id, refresh_jti)
 
-        await store_jti(access_jti, settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60)
-        await store_jti(refresh_jti, settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400)
+        uid_str = str(user.id)
+        await store_jti(access_jti, settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60, uid_str)
+        await store_jti(refresh_jti, settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400, uid_str)
 
         await self._write_audit(user.id, "LOGIN_SUCCESS", ip, user.role.value)
 
@@ -130,8 +131,9 @@ class AuthService:
         access_token = create_access_token(user.id, user.role, new_access_jti)
         new_refresh = create_refresh_token(user.id, new_refresh_jti)
 
-        await store_jti(new_access_jti, settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60)
-        await store_jti(new_refresh_jti, settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400)
+        uid_str = str(user.id)
+        await store_jti(new_access_jti, settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60, uid_str)
+        await store_jti(new_refresh_jti, settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400, uid_str)
 
         return TokenPair(
             access_token=access_token,

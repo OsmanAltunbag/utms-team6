@@ -6,8 +6,16 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.core.security import decode_token
 from app.domain.user import User
-from app.schemas.auth import LoginRequest, TokenResponse
+from app.schemas.auth import (
+    ForgotPasswordRequest,
+    LoginRequest,
+    RegistrationRequest,
+    ResetPasswordRequest,
+    TokenResponse,
+)
 from app.services.auth_service import AuthService
+from app.services.password_reset_service import PasswordResetService
+from app.services.registration_service import RegistrationService
 
 router = APIRouter()
 
@@ -39,6 +47,10 @@ def _clear_auth_cookies(response: Response) -> None:
     response.delete_cookie(key="access_token", path="/")
     response.delete_cookie(key="refresh_token", path="/api/auth/refresh")
 
+
+# ---------------------------------------------------------------------------
+# Existing auth endpoints
+# ---------------------------------------------------------------------------
 
 @router.post("/login", response_model=TokenResponse)
 async def login(
@@ -89,3 +101,62 @@ async def refresh(
     pair = await service.refresh_token(raw_refresh)
     _set_auth_cookies(response, pair.access_token, pair.refresh_token)
     return TokenResponse(role=pair.role)
+
+
+# ---------------------------------------------------------------------------
+# Registration (SPEC-003 Task 3)
+# ---------------------------------------------------------------------------
+
+@router.post("/register", status_code=status.HTTP_201_CREATED)
+async def register(
+    body: RegistrationRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    service = RegistrationService(db)
+    await service.register(body)
+    return {"message": "Account created. Verification email sent."}
+
+
+@router.post("/verify-email/{token}", status_code=status.HTTP_200_OK)
+async def verify_email(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    service = RegistrationService(db)
+    await service.verify_email(token)
+    return {"message": "Email verified successfully"}
+
+
+# ---------------------------------------------------------------------------
+# Password Reset (SPEC-003 Task 3)
+# ---------------------------------------------------------------------------
+
+@router.post("/forgot-password", status_code=status.HTTP_200_OK)
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    service = PasswordResetService(db)
+    await service.request_reset(body.email)
+    return {"message": "If this email is registered, a password reset link has been sent."}
+
+
+@router.get("/reset-password/{token}", status_code=status.HTTP_200_OK)
+async def validate_reset_token(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    service = PasswordResetService(db)
+    await service.validate_token(token)
+    return {"message": "Token is valid"}
+
+
+@router.post("/reset-password/{token}", status_code=status.HTTP_200_OK)
+async def reset_password(
+    token: str,
+    body: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    service = PasswordResetService(db)
+    await service.reset_password(token, body.new_password)
+    return {"message": "Password updated successfully"}

@@ -19,9 +19,8 @@ class Settings(BaseSettings):
     MINIO_SECURE: bool = False
 
     # JWT
-    JWT_PRIVATE_KEY: str = ""
-    JWT_PUBLIC_KEY: str = ""
-    JWT_ALGORITHM: str = "RS256"
+    JWT_SECRET_KEY: str = "change-me-in-production"
+    JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
