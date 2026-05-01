@@ -1,4 +1,4 @@
--r requirements.txt
+-r requirements-lock.txt
 
 # ── Testing ─────────────────────────────────────────────────────────────────
 pytest==8.3.4
