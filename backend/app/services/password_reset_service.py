@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import HTTPException, status
+from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.redis import (
@@ -12,7 +12,7 @@ from app.core.redis import (
 from app.core.security import hash_password
 from app.domain.audit import AuditLog
 from app.repositories.user_repository import UserRepository
-
+from app.workers.tasks import send_password_reset_email_impl
 
 
 class PasswordResetService:
@@ -20,7 +20,7 @@ class PasswordResetService:
         self.db = db
         self._user_repo = UserRepository(db)
 
-    async def request_reset(self, email: str) -> None:
+    async def request_reset(self, email: str, background_tasks: BackgroundTasks) -> None:
         """
         Always returns success to prevent user enumeration (UC-01-02).
         Token is only stored and email sent when the account actually exists.
@@ -31,13 +31,7 @@ class PasswordResetService:
 
         token = str(uuid.uuid4())
         await store_pwd_reset_token(token, str(user.id))
-        # TODO: send_password_reset_email.delay(email, token)
-        print(
-            f"\n\n{'='*50}\n"
-            f"[DEV] SIFRE SIFIRLAMA LINKI: http://localhost:8000/api/auth/reset-password/{token}\n"
-            f"{'='*50}\n",
-            flush=True,
-        )
+        background_tasks.add_task(send_password_reset_email_impl, email, token)
 
     async def validate_token(self, token: str) -> str:
         """Return user_id string if the token is valid; raise 410 otherwise."""
