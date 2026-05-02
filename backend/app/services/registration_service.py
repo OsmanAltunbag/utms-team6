@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import HTTPException, status
+from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.redis import (
@@ -14,6 +14,7 @@ from app.domain.enums import UserRole
 from app.domain.user import Applicant, User
 from app.repositories.user_repository import UserRepository
 from app.schemas.auth import RegistrationRequest
+from app.workers.tasks import send_verification_email_impl
 
 
 
@@ -22,7 +23,7 @@ class RegistrationService:
         self.db = db
         self._user_repo = UserRepository(db)
 
-    async def register(self, payload: RegistrationRequest) -> User:
+    async def register(self, payload: RegistrationRequest, background_tasks: BackgroundTasks) -> User:
         # 1. Check email uniqueness
         if await self._user_repo.get_by_email(payload.university_email):
             raise HTTPException(
@@ -66,13 +67,7 @@ class RegistrationService:
         await store_email_verify_token(token, str(user.id))
 
         # 7. Enqueue verification email
-        # TODO: send_verification_email.delay(payload.university_email, token)
-        print(
-            f"\n\n{'='*50}\n"
-            f"[DEV] DOGRULAMA LINKI: http://localhost:8000/api/auth/verify-email/{token}\n"
-            f"{'='*50}\n",
-            flush=True,
-        )
+        background_tasks.add_task(send_verification_email_impl, payload.university_email, token)
 
         # 8. Write audit log
         log = AuditLog(

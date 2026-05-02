@@ -32,12 +32,16 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
+    # App base URL (used in email links)
+    APP_BASE_URL: str = "http://localhost:5173"
+    FRONTEND_URL: str = "http://localhost:5173"
+
     # Email
-    SMTP_HOST: str = "localhost"
+    SMTP_SERVER: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
-    SMTP_USER: str = ""
+    SMTP_USERNAME: str = ""
     SMTP_PASSWORD: str = ""
-    SMTP_FROM: str = "noreply@iyte.edu.tr"
+    FROM_EMAIL: str = "noreply@iyte.edu.tr"
 
 
 settings = Settings()

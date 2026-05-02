@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -110,10 +110,11 @@ async def refresh(
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(
     body: RegistrationRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     service = RegistrationService(db)
-    await service.register(body)
+    await service.register(body, background_tasks)
     return {"message": "Account created. Verification email sent."}
 
 
@@ -134,10 +135,11 @@ async def verify_email(
 @router.post("/forgot-password", status_code=status.HTTP_200_OK)
 async def forgot_password(
     body: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     service = PasswordResetService(db)
-    await service.request_reset(body.email)
+    await service.request_reset(body.email, background_tasks)
     return {"message": "If this email is registered, a password reset link has been sent."}
 
 
