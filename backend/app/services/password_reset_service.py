@@ -15,7 +15,6 @@ from app.repositories.user_repository import UserRepository
 from app.workers.tasks import send_password_reset_email_impl
 
 
-
 class PasswordResetService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db

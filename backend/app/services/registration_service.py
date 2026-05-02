@@ -17,7 +17,6 @@ from app.schemas.auth import RegistrationRequest
 from app.workers.tasks import send_verification_email_impl
 
 
-
 class RegistrationService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
