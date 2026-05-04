@@ -67,6 +67,15 @@ class AuthService:
                 detail=_GENERIC_AUTH_ERROR,
             )
 
+        # Block unverified accounts: registration sets is_verified=False;
+        # only the email-link flow flips it to True.
+        if not user.is_verified:
+            await self._write_audit(user.id, "LOGIN_BLOCKED_UNVERIFIED", ip, user.role.value)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Please verify your email address before logging in.",
+            )
+
         # Successful login
         await self._clear_failed_attempts(user)
 
