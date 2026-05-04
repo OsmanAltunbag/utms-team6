@@ -88,6 +88,8 @@ services:
       APP_ENV: development
     ports:
       - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app
     depends_on:
       db:
         condition: service_healthy

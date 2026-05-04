@@ -2,9 +2,11 @@ import { createContext, useContext, useState, type ReactNode } from 'react'
 
 interface AuthState {
   role: string | null
+  userName: string | null
 }
 
 interface AuthContextValue extends AuthState {
+  setAuth: (role: string, userName: string) => void
   setRole: (role: string) => void
   clearAuth: () => void
 }
@@ -15,6 +17,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [role, setRoleState] = useState<string | null>(
     () => sessionStorage.getItem('role'),
   )
+  const [userName, setUserNameState] = useState<string | null>(
+    () => sessionStorage.getItem('userName'),
+  )
+
+  function setAuth(r: string, name: string) {
+    sessionStorage.setItem('role', r)
+    sessionStorage.setItem('userName', name)
+    setRoleState(r)
+    setUserNameState(name)
+  }
 
   function setRole(r: string) {
     sessionStorage.setItem('role', r)
@@ -23,11 +35,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   function clearAuth() {
     sessionStorage.removeItem('role')
+    sessionStorage.removeItem('userName')
     setRoleState(null)
+    setUserNameState(null)
   }
 
   return (
-    <AuthContext.Provider value={{ role, setRole, clearAuth }}>
+    <AuthContext.Provider value={{ role, userName, setAuth, setRole, clearAuth }}>
       {children}
     </AuthContext.Provider>
   )
