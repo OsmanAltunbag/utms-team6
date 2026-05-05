@@ -19,16 +19,14 @@ export function extractErrorMessage(err: unknown): string {
 }
 
 export async function register(payload: {
-  national_id: string
-  date_of_birth: string
-  first_name: string
-  last_name: string
-  university_email: string
-  password: string
-  password_confirm: string
+    full_name: string
+    email: string
+    phone: string
+    password: string
+    password_confirm: string
 }): Promise<{ message: string }> {
-  const { data } = await client.post('/auth/register', payload)
-  return data
+    const { data } = await client.post('/auth/register', payload)
+    return data
 }
 
 export async function login(payload: {
