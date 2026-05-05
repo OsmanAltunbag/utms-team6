@@ -8,22 +8,38 @@ const passwordSchema = z
   .regex(/[!@#$%^&*()\-_=+\[\]{};:'",.<>?/\\|`~]/, 'Must contain at least one special character')
 
 export const registerSchema = z
-  .object({
-    national_id: z
-      .string()
-      .min(5, 'National ID must be at least 5 characters')
-      .max(11, 'National ID must be at most 11 characters'),
-    date_of_birth: z.string().min(1, 'Date of birth is required'),
-    first_name: z.string().min(1, 'First name is required').max(100),
-    last_name: z.string().min(1, 'Last name is required').max(100),
-    university_email: z.string().email('Enter a valid university email'),
-    password: passwordSchema,
-    password_confirm: z.string().min(1, 'Please confirm your password'),
-  })
-  .refine((d) => d.password === d.password_confirm, {
-    message: 'Passwords do not match',
-    path: ['password_confirm'],
-  })
+    .object({
+        national_id: z
+            .string()
+            .min(5, 'National ID must be at least 5 characters')
+            .max(11, 'National ID must be at most 11 characters'),
+        date_of_birth: z
+            .string()
+            .min(1, 'Date of birth is required')
+            .refine((date) => new Date(date) >= new Date('1900-01-01'), {
+                message: 'Date of birth cannot be before 1900',
+            })
+            .refine((date) => new Date(date) <= new Date(), {
+                message: 'Date of birth cannot be in the future',
+            }),
+        first_name: z.string().min(1, 'First name is required').max(100),
+        last_name: z.string().min(1, 'Last name is required').max(100),
+
+        university_email: z
+            .string()
+            .email('Enter a valid email address')
+            .regex(
+                /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.edu\.tr$/,
+                'Only .edu.tr university email addresses are allowed'
+            ),
+
+        password: passwordSchema,
+        password_confirm: z.string().min(1, 'Please confirm your password'),
+    })
+    .refine((d) => d.password === d.password_confirm, {
+        message: 'Passwords do not match',
+        path: ['password_confirm'],
+    })
 
 export type RegisterFormData = z.infer<typeof registerSchema>
 
