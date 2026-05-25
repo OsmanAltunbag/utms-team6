@@ -50,7 +50,7 @@ class AuthService:
 
         # Unknown email — do a dummy hash to prevent timing attacks, then 401
         if user is None:
-            verify_password("dummy", "$2b$12$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+            verify_password("dummy", "$2b$12$SHG7.6D7iPX1.1fUgnyktOOpgT7w7R/4AQjsRqRRpm4OfmWIIAPyy")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=_GENERIC_AUTH_ERROR,

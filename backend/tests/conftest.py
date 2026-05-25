@@ -67,7 +67,7 @@ def mock_redis_store():
 def patch_redis(mock_redis_store):
     """Patch all three redis helpers used by AuthService and dependencies."""
 
-    async def _store(jti, ttl_seconds):
+    async def _store(jti, ttl_seconds, user_id=None):
         mock_redis_store[jti] = True
 
     async def _revoke(jti):

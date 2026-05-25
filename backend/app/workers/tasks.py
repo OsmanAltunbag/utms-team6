@@ -181,6 +181,21 @@ def send_password_reset_email_impl(email: str, token: str) -> None:
 # Celery task wrappers (enqueue via .delay() for async processing)
 # ---------------------------------------------------------------------------
 
+def send_application_confirmation_impl(user_id: str, tracking_number: str) -> None:
+    logger.info("Application confirmation enqueued for user=%s tracking=%s", user_id, tracking_number)
+    # In production: look up user email and send a confirmation email with tracking_number
+    body = f"""
+      <h2 style="margin:0 0 16px;color:#1a3a6b;font-size:22px;">Başvurunuz Alındı</h2>
+      <p style="margin:0 0 12px;color:#444;font-size:15px;line-height:1.7;">
+        Transfer başvurunuz başarıyla alınmıştır.
+      </p>
+      <p style="margin:0 0 28px;color:#666;font-size:14px;line-height:1.6;">
+        Takip numaranız: <strong>{tracking_number}</strong>
+      </p>
+    """
+    logger.info("Application confirmation body prepared for tracking=%s", tracking_number)
+
+
 @celery_app.task(name="app.workers.tasks.placeholder")
 def placeholder():
     pass
@@ -198,5 +213,13 @@ def send_verification_email(self, email: str, token: str) -> None:
 def send_password_reset_email(self, email: str, token: str) -> None:
     try:
         send_password_reset_email_impl(email, token)
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=60)
+
+
+@celery_app.task(name="app.workers.tasks.send_application_confirmation", bind=True, max_retries=3)
+def send_application_confirmation(self, user_id: str, tracking_number: str) -> None:
+    try:
+        send_application_confirmation_impl(user_id, tracking_number)
     except Exception as exc:
         raise self.retry(exc=exc, countdown=60)

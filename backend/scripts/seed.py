@@ -11,6 +11,7 @@ import asyncio
 import os
 import sys
 import uuid
+from datetime import datetime, timedelta, timezone
 
 # Allow running as `python -m scripts.seed` from backend/
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.domain.enums import UserRole
+from app.domain.period import ApplicationPeriod
 from app.domain.program import Program
 from app.domain.user import Applicant, Staff, User
 
@@ -152,6 +154,24 @@ async def seed(session: AsyncSession) -> None:
         admin_staff = Staff(id=admin_id, department="IT", title="System Administrator")
         session.add(admin_staff)
         print(f"  [+] Admin user: {TEST_ADMIN['email']} (password: {TEST_ADMIN['password']})")
+
+    # ── Application Period ────────────────────────────────────────────
+    existing_period = await session.scalar(
+        select(ApplicationPeriod).where(ApplicationPeriod.label == "2025-2026 Spring")
+    )
+    if existing_period:
+        print(f"  [skip] Period '2025-2026 Spring' already exists — id: {existing_period.id}")
+    else:
+        now = datetime.now(timezone.utc)
+        period = ApplicationPeriod(
+            label="2025-2026 Spring",
+            opens_at=now - timedelta(days=1),
+            closes_at=now + timedelta(days=60),
+            is_active=True,
+        )
+        session.add(period)
+        await session.flush()
+        print(f"  [+] Period: 2025-2026 Spring — id: {period.id}")
 
     await session.commit()
 

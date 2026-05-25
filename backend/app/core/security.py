@@ -26,6 +26,14 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_ctx.verify(plain, hashed)
 
 
+def _private_key() -> str:
+    return settings.JWT_PRIVATE_KEY or settings.JWT_SECRET_KEY
+
+
+def _public_key() -> str:
+    return settings.JWT_PUBLIC_KEY or settings.JWT_SECRET_KEY
+
+
 def create_access_token(user_id: uuid.UUID, role: UserRole, jti: str) -> str:
     now = datetime.now(timezone.utc)
     expire = now + timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -37,7 +45,7 @@ def create_access_token(user_id: uuid.UUID, role: UserRole, jti: str) -> str:
         "exp": expire,
         "type": "access",
     }
-    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    return jwt.encode(payload, _private_key(), algorithm=settings.JWT_ALGORITHM)
 
 
 def create_refresh_token(user_id: uuid.UUID, jti: str) -> str:
@@ -50,7 +58,7 @@ def create_refresh_token(user_id: uuid.UUID, jti: str) -> str:
         "exp": expire,
         "type": "refresh",
     }
-    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    return jwt.encode(payload, _private_key(), algorithm=settings.JWT_ALGORITHM)
 
 
 def decode_token(token: str) -> dict:
@@ -58,7 +66,7 @@ def decode_token(token: str) -> dict:
     try:
         payload = jwt.decode(
             token,
-            settings.JWT_SECRET_KEY,
+            _public_key(),
             algorithms=[settings.JWT_ALGORITHM],
         )
         return payload

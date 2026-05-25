@@ -1,0 +1,39 @@
+import uuid
+from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel
+
+from app.domain.enums import DocType
+
+
+class GenerateUploadUrlRequest(BaseModel):
+    doc_type: DocType
+
+
+class PresignedUploadResponse(BaseModel):
+    upload_url: str
+    object_key: str
+
+
+class ConfirmUploadRequest(BaseModel):
+    doc_type: DocType
+    object_key: str
+    file_name: str
+    file_size_bytes: int
+
+
+class DocumentSummary(BaseModel):
+    id: uuid.UUID
+    application_id: uuid.UUID
+    doc_type: str
+    file_name: str
+    file_size_bytes: Optional[int]
+    status: str
+    uploaded_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PreviewUrlResponse(BaseModel):
+    preview_url: str

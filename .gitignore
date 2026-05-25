@@ -39,3 +39,5 @@ htmlcov/
 
 # Claude Code local config
 .claude/
+node_modules/
+frontend/node_modules/
