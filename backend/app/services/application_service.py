@@ -316,3 +316,9 @@ class ApplicationService:
         )
         self.db.add(log)
         await self.db.flush()
+
+        try:
+            from app.core.redis import publish_status_change
+            await publish_status_change(str(application.id), new_status.value)
+        except Exception:
+            logger.warning("Failed to publish status change for %s", application.id)

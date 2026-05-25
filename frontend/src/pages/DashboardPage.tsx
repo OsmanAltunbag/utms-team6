@@ -9,11 +9,13 @@ import { logout } from '../api/auth'
 import {
   listApplications,
   getApplication,
+  getApplicationStatus,
   createApplication,
   fetchAcademicData,
   submitApplication,
   listDocuments,
   uploadDocument,
+  verifyDocument,
   getPreviewUrl,
   listPrograms,
   listOpenPeriods,
@@ -24,7 +26,7 @@ import { useAuth } from '../context/AuthContext'
 import { Sidebar } from '../components/Sidebar'
 import { StatusBadge } from '../components/StatusBadge'
 import Spinner from '../components/Spinner'
-import type { ApplicationDetail, AcademicRecord, Document, DocType } from '../types/application'
+import type { ApplicationDetail, ApplicationStatus, AcademicRecord, Document, DocType } from '../types/application'
 import { extractErrorMessage } from '../api/auth'
 
 const ROLE_LABELS: Record<string, string> = {
@@ -168,6 +170,152 @@ function NewApplicationForm({ onCreated }: { onCreated: (id: string) => void }) 
 }
 
 // ---------------------------------------------------------------------------
+// Extracted data label helpers
+// ---------------------------------------------------------------------------
+
+const EXTRACTION_LABELS: Record<string, string> = {
+  gpa: 'GPA',
+  completed_credits: 'Completed Credits',
+  total_credits: 'Total Credits',
+  institution: 'Institution',
+  score: 'Score',
+  score_type: 'Score Type',
+  exam_year: 'Exam Year',
+  certificate_type: 'Certificate Type',
+  validity_date: 'Valid Until',
+  national_id_verified: 'National ID Verified',
+}
+
+function ExtractionCard({
+  applicationId,
+  documentId,
+  data,
+  confirmed,
+  onConfirmed,
+}: {
+  applicationId: string
+  documentId: string
+  data: Record<string, unknown>
+  confirmed: boolean
+  onConfirmed: () => void
+}) {
+  const [confirming, setConfirming] = useState(false)
+
+  const missing = (data._missing as string[] | undefined) ?? []
+  const found = Object.entries(data).filter(([k]) => k !== '_missing')
+  const isIncomplete = missing.length > 0
+  const hasNothing = found.length === 0
+
+  async function handleConfirm() {
+    setConfirming(true)
+    try {
+      await verifyDocument(applicationId, documentId)
+      toast.success('Document verified.')
+      onConfirmed()
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setConfirming(false)
+    }
+  }
+
+  if (confirmed) {
+    return (
+      <div className="mt-2 rounded-lg border border-green-200 bg-green-50 p-3">
+        <p className="text-xs font-medium text-green-700 mb-1">Extracted Information (Confirmed)</p>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+          {found.map(([key, val]) => (
+            <div key={key}>
+              <span className="text-gray-400 text-xs">{EXTRACTION_LABELS[key] ?? key}: </span>
+              <span className="text-gray-800 text-xs font-medium">{String(val)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  if (isIncomplete || hasNothing) {
+    const noExtractionDefined = found.length === 0 && missing.length === 0
+    return (
+      <div className="mt-2 rounded-lg border border-red-200 bg-red-50 p-3">
+        <p className="text-xs font-medium text-red-700 mb-2">
+          {noExtractionDefined
+            ? 'No automatic extraction available for this document type'
+            : hasNothing
+              ? 'No information could be extracted from this file'
+              : 'Some information could not be extracted'}
+        </p>
+
+        {found.length > 0 && (
+          <div className="mb-2">
+            <p className="text-xs text-gray-500 mb-1">Found:</p>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+              {found.map(([key, val]) => (
+                <div key={key}>
+                  <span className="text-gray-400 text-xs">{EXTRACTION_LABELS[key] ?? key}: </span>
+                  <span className="text-gray-800 text-xs font-medium">{String(val)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {missing.length > 0 && (
+          <div className="mb-2">
+            <p className="text-xs text-gray-500 mb-1">Missing:</p>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+              {missing.map((key) => (
+                <div key={key}>
+                  <span className="text-gray-400 text-xs">{EXTRACTION_LABELS[key] ?? key}: </span>
+                  <span className="text-red-500 text-xs font-medium">Not found</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <p className="text-xs text-red-600 mb-2">
+          {noExtractionDefined
+            ? 'Please confirm you have uploaded the correct document.'
+            : 'Please check that you uploaded the correct document. You may re-upload or confirm anyway.'}
+        </p>
+        <button
+          onClick={handleConfirm}
+          disabled={confirming}
+          className="flex items-center gap-1 px-2 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50"
+        >
+          {confirming ? <Spinner /> : <CheckCircle className="w-3 h-3" />}
+          Confirm Anyway
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-2 rounded-lg border border-yellow-200 bg-yellow-50 p-3">
+      <p className="text-xs font-medium text-yellow-700 mb-2">Extracted Information — Please verify</p>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 mb-2">
+        {found.map(([key, val]) => (
+          <div key={key}>
+            <span className="text-gray-400 text-xs">{EXTRACTION_LABELS[key] ?? key}: </span>
+            <span className="text-gray-800 text-xs font-medium">{String(val)}</span>
+          </div>
+        ))}
+      </div>
+      <button
+        onClick={handleConfirm}
+        disabled={confirming}
+        className="flex items-center gap-1 px-2 py-1 text-xs bg-yellow-500 text-white rounded hover:bg-yellow-600 disabled:opacity-50"
+      >
+        {confirming ? <Spinner /> : <CheckCircle className="w-3 h-3" />}
+        Confirm
+      </button>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Document upload row
 // ---------------------------------------------------------------------------
 
@@ -217,42 +365,57 @@ function DocumentUploadRow({
     window.open(preview_url, '_blank')
   }
 
+  const hasExtraction = existing?.extracted_data !== null && existing?.extracted_data !== undefined
+
   return (
-    <div className="flex items-center justify-between py-3 border-b border-gray-100 last:border-0">
-      <div className="flex items-center gap-3">
-        <div className={`w-2 h-2 rounded-full ${existing ? 'bg-green-500' : 'bg-gray-300'}`} />
-        <div>
-          <p className="text-sm text-gray-900">{DOC_TYPE_LABELS[docType]}</p>
+    <div className="py-3 border-b border-gray-100 last:border-0">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className={`w-2 h-2 rounded-full ${existing ? 'bg-green-500' : 'bg-gray-300'}`} />
+          <div>
+            <p className="text-sm text-gray-900">{DOC_TYPE_LABELS[docType]}</p>
+            {existing && (
+              <p className="text-xs text-gray-400">{existing.file_name} · {existing.status}</p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
           {existing && (
-            <p className="text-xs text-gray-400">{existing.file_name} · {existing.status}</p>
+            <button
+              onClick={handlePreview}
+              className="flex items-center gap-1 px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 rounded"
+            >
+              <Eye className="w-3 h-3" /> Preview
+            </button>
           )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/pdf"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="flex items-center gap-1 px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+          >
+            {uploading ? <Spinner /> : <Upload className="w-3 h-3" />}
+            {existing ? 'Replace' : 'Upload'}
+          </button>
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        {existing && (
-          <button
-            onClick={handlePreview}
-            className="flex items-center gap-1 px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 rounded"
-          >
-            <Eye className="w-3 h-3" /> Preview
-          </button>
-        )}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="application/pdf"
-          className="hidden"
-          onChange={handleFileChange}
-        />
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
-          className="flex items-center gap-1 px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
-        >
-          {uploading ? <Spinner /> : <Upload className="w-3 h-3" />}
-          {existing ? 'Replace' : 'Upload'}
-        </button>
-      </div>
+      {existing && hasExtraction && (
+        <div className="ml-5">
+          <ExtractionCard
+            applicationId={applicationId}
+            documentId={existing.id}
+            data={existing.extracted_data as Record<string, unknown>}
+            confirmed={existing.extraction_confirmed}
+            onConfirmed={onUploaded}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -264,6 +427,7 @@ function DocumentUploadRow({
 function ApplicantDashboardContent({ userName, onLogout }: { userName: string; onLogout: () => void }) {
   const [activeTab, setActiveTab] = useState<'overview' | 'application' | 'messages' | 'results'>('overview')
   const [application, setApplication] = useState<ApplicationDetail | null>(null)
+  const [appStatus, setAppStatus] = useState<ApplicationStatus | null>(null)
   const [documents, setDocuments] = useState<Document[]>([])
   const [academicRecord, setAcademicRecord] = useState<AcademicRecord | null>(null)
   const [loadingApp, setLoadingApp] = useState(true)
@@ -279,10 +443,14 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
         if (apps.length === 0) { setHasNoApp(true); setLoadingApp(false); return }
         appId = apps[0].id
       }
-      const detail = await getApplication(appId)
+      const [detail, statusData, docs] = await Promise.all([
+        getApplication(appId),
+        getApplicationStatus(appId),
+        listDocuments(appId),
+      ])
       setApplication(detail)
+      setAppStatus(statusData)
       setHasNoApp(false)
-      const docs = await listDocuments(appId)
       setDocuments(docs)
     } catch {
       setHasNoApp(true)
@@ -292,6 +460,18 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
   }
 
   useEffect(() => { loadApplication() }, [])
+
+  // SSE: auto-refresh on status change
+  useEffect(() => {
+    if (!application) return
+    const terminal = ['ANNOUNCED', 'REJECTED']
+    if (terminal.includes(application.status)) return
+
+    const es = new EventSource(`/api/applications/${application.id}/events`, { withCredentials: true })
+    es.onmessage = () => { loadApplication(application.id) }
+    es.onerror = () => { es.close() }
+    return () => es.close()
+  }, [application?.id, application?.status])
 
   async function handleFetchAcademic() {
     if (!application) return
@@ -362,13 +542,37 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
                 <NewApplicationForm onCreated={(id) => { setLoadingApp(true); loadApplication(id) }} />
               ) : application ? (
                 <>
+                  {/* CORRECTION_REQUESTED banner */}
+                  {application.status === 'CORRECTION_REQUESTED' && (
+                    <div className="bg-yellow-50 border border-yellow-300 rounded-lg p-4 flex items-start gap-3">
+                      <Clock className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium text-yellow-800">Correction Required</p>
+                        <p className="text-xs text-yellow-700 mt-0.5">Your documents need corrections. Please upload the updated files in the Documents tab.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* REJECTED banner */}
+                  {application.status === 'REJECTED' && (
+                    <div className="bg-red-50 border border-red-300 rounded-lg p-4">
+                      <p className="text-sm font-semibold text-red-800 mb-1">Application Rejected</p>
+                      {appStatus?.result?.reason && (
+                        <p className="text-sm text-red-700">{appStatus.result.reason}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Status card */}
                   <div className="bg-white rounded-lg shadow-sm p-6">
                     <div className="flex items-start justify-between mb-6">
                       <div>
                         <h2 className="text-lg font-semibold text-gray-900 mb-1">Application Status</h2>
-                        {application.tracking_number && (
-                          <p className="text-gray-500 text-sm">Tracking: {application.tracking_number}</p>
-                        )}
+                        <p className="text-gray-500 text-sm">
+                          {application.tracking_number
+                            ? `Tracking: ${application.tracking_number}`
+                            : 'Not yet submitted'}
+                        </p>
                       </div>
                       <StatusBadge status={application.status} />
                     </div>
@@ -389,19 +593,30 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
                     </div>
                   </div>
 
+                  {/* Progress — vertical step list (Figma style) */}
                   <div className="bg-white rounded-lg shadow-sm p-6">
-                    <div className="flex items-center justify-between mb-6">
-                      <h2 className="text-lg font-semibold text-gray-900">Application Progress</h2>
-                      <span className="text-sm text-gray-500">{application.progress.percentage}%</span>
-                    </div>
-                    <div className="w-full bg-gray-100 rounded-full h-1.5 mb-6">
-                      <div
-                        className="bg-indigo-600 h-1.5 rounded-full transition-all"
-                        style={{ width: `${application.progress.percentage}%` }}
-                      />
-                    </div>
+                    <h2 className="text-lg font-semibold text-gray-900 mb-6">Application Progress</h2>
                     <div className="space-y-4">
-                      {application.progress.steps.map((step, i) => (
+                      {appStatus ? appStatus.progress.stages.map((stage, i) => (
+                        <div key={i} className="flex items-start gap-4">
+                          <div className="mt-0.5">
+                            {stage.completed ? (
+                              <CheckCircle className="w-5 h-5 text-green-600" />
+                            ) : stage.active ? (
+                              <Clock className="w-5 h-5 text-blue-600" />
+                            ) : (
+                              <div className="w-5 h-5 rounded-full border-2 border-gray-300" />
+                            )}
+                          </div>
+                          <div className="flex-1 flex items-center justify-between">
+                            <div>
+                              <p className="text-sm text-gray-900">{stage.label_en}</p>
+                              <p className="text-xs text-gray-400">{stage.label_tr}</p>
+                            </div>
+                            <StatusBadge status={stage.completed ? 'completed' : stage.active ? 'pending' : 'waiting'} />
+                          </div>
+                        </div>
+                      )) : application.progress.steps.map((step, i) => (
                         <div key={i} className="flex items-start gap-4">
                           <div className="mt-0.5">
                             {step.completed ? (
@@ -421,7 +636,31 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
                     </div>
                   </div>
 
-                  {/* Eligibility results */}
+                  {/* Status history */}
+                  {appStatus && appStatus.history.length > 0 && (
+                    <div className="bg-white rounded-lg shadow-sm p-6">
+                      <h2 className="text-lg font-semibold text-gray-900 mb-4">Status History</h2>
+                      <div className="space-y-4">
+                        {appStatus.history.map((entry, i) => (
+                          <div key={i} className="flex items-start gap-4">
+                            <div className="mt-0.5">
+                              <CheckCircle className="w-5 h-5 text-indigo-400" />
+                            </div>
+                            <div className="flex-1 flex items-center justify-between">
+                              <div>
+                                <p className="text-sm text-gray-900">{entry.status.replace(/_/g, ' ')}</p>
+                                {entry.note && <p className="text-xs text-gray-400">{entry.note}</p>}
+                                {entry.changed_by_role && <p className="text-xs text-gray-400">{entry.changed_by_role.replace(/_/g, ' ')}</p>}
+                              </div>
+                              <span className="text-xs text-gray-400">{new Date(entry.changed_at).toLocaleDateString()}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Eligibility checks */}
                   {application.eligibility_checks.length > 0 && (
                     <div className="bg-white rounded-lg shadow-sm p-6">
                       <h2 className="text-lg font-semibold text-gray-900 mb-4">Eligibility Checks</h2>

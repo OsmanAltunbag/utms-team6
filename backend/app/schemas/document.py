@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel
 
@@ -31,9 +31,16 @@ class DocumentSummary(BaseModel):
     file_size_bytes: Optional[int]
     status: str
     uploaded_at: datetime
+    extracted_data: Optional[Any] = None
+    extraction_confirmed: bool = False
 
     model_config = {"from_attributes": True}
 
 
 class PreviewUrlResponse(BaseModel):
     preview_url: str
+
+
+class VerifyDocumentResponse(BaseModel):
+    id: uuid.UUID
+    extraction_confirmed: bool

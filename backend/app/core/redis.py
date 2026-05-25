@@ -1,3 +1,5 @@
+import json
+from datetime import datetime, timezone
 from typing import Optional
 
 import redis.asyncio as aioredis
@@ -115,3 +117,17 @@ async def get_pwd_reset_token(token: str) -> Optional[str]:
 async def delete_pwd_reset_token(token: str) -> None:
     r = await get_redis()
     await r.delete(_pwd_reset_key(token))
+
+
+# ---------------------------------------------------------------------------
+# Status-change pub/sub
+# ---------------------------------------------------------------------------
+
+async def publish_status_change(application_id: str, new_status: str) -> None:
+    r = await get_redis()
+    payload = json.dumps({
+        "type": "STATUS_CHANGED",
+        "status": new_status,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+    await r.publish(f"app_status:{application_id}", payload)

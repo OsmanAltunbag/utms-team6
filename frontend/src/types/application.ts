@@ -75,6 +75,8 @@ export interface Document {
   file_size_bytes: number | null
   status: DocStatus
   uploaded_at: string
+  extracted_data: Record<string, unknown> | null
+  extraction_confirmed: boolean
 }
 
 export interface PresignedUploadResult {
@@ -85,4 +87,30 @@ export interface PresignedUploadResult {
 export interface SubmitResult {
   tracking_number: string
   status: AppStatus
+}
+
+export interface PipelineStage {
+  name: string
+  label_tr: string
+  label_en: string
+  completed: boolean
+  active: boolean
+}
+
+export interface HistoryEntry {
+  status: AppStatus
+  changed_at: string
+  changed_by_role: string | null
+  note: string | null
+}
+
+export interface ApplicationStatus {
+  tracking_number: string | null
+  status: AppStatus
+  progress: {
+    stages: PipelineStage[]
+    current_stage: string
+  }
+  history: HistoryEntry[]
+  result: { outcome: string; reason: string | null } | null
 }

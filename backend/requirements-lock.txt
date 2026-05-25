@@ -87,3 +87,6 @@ rsa==4.9.1
 # cffi / bcrypt / cryptography build chain
 cffi==2.0.0
 pycparser==3.0
+
+# PDF text extraction (pure Python, no transitive deps required)
+pypdf==4.3.1

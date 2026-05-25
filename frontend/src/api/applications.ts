@@ -1,6 +1,7 @@
 import axios from 'axios'
 import type {
   ApplicationDetail,
+  ApplicationStatus,
   ApplicationSummary,
   AcademicRecord,
   Document,
@@ -69,9 +70,24 @@ export async function fetchAcademicData(applicationId: string): Promise<Academic
   return data
 }
 
+export async function getApplicationStatus(applicationId: string): Promise<ApplicationStatus> {
+  const { data } = await client.get<ApplicationStatus>(`/applications/${applicationId}/status`)
+  return data
+}
+
 export async function submitApplication(applicationId: string): Promise<SubmitResult> {
   const { data } = await client.post<SubmitResult>(
     `/applications/${applicationId}/submit`,
+  )
+  return data
+}
+
+export async function verifyDocument(
+  applicationId: string,
+  documentId: string,
+): Promise<{ id: string; extraction_confirmed: boolean }> {
+  const { data } = await client.post<{ id: string; extraction_confirmed: boolean }>(
+    `/applications/${applicationId}/documents/${documentId}/verify`,
   )
   return data
 }

@@ -6,16 +6,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_role
-from app.domain.enums import AppStatus, UserRole
+from app.core.storage import MinIOClient, get_minio_client
+from app.domain.enums import AppStatus, DocType, UserRole
 from app.domain.user import User
 from app.repositories.application_repository import ApplicationRepository
+from app.repositories.audit_log_repository import AuditLogRepository
 from app.repositories.document_repository import DocumentRepository
 from app.schemas.application import (
     ApplicationCreatedResponse,
     ApplicationDetailResponse,
+    ApplicationStatusResponse,
     ApplicationSummary,
     CreateApplicationRequest,
     EligibilityCheckResponse,
+    HistoryEntry,
+    ProgressOut,
+    ResultOut,
+    StageOut,
     StatusChangeRequest,
     SubmitApplicationResponse,
 )
@@ -24,11 +31,20 @@ from app.schemas.document import (
     DocumentSummary,
     GenerateUploadUrlRequest,
     PresignedUploadResponse,
+    VerifyDocumentResponse,
 )
-from app.core.storage import MinIOClient, get_minio_client
-from app.domain.enums import DocType
 from app.services.application_service import ApplicationService
 from app.services.document_service import DocumentService
+
+_PIPELINE_STAGES = [
+    {"name": "SUBMITTED",      "label_tr": "Başvuru Alındı",        "label_en": "Submitted"},
+    {"name": "UNDER_REVIEW",   "label_tr": "Belge Doğrulama",       "label_en": "Document Verification"},
+    {"name": "ENGLISH_REVIEW", "label_tr": "İngilizce Yeterliliği", "label_en": "English Proficiency"},
+    {"name": "DEPT_EVAL",      "label_tr": "Bölüm Değerlendirmesi", "label_en": "Department Evaluation"},
+    {"name": "RANKING",        "label_tr": "Sıralama",              "label_en": "Ranking"},
+    {"name": "ANNOUNCED",      "label_tr": "Sonuç Açıklandı",       "label_en": "Result Announced"},
+]
+_STAGE_NAMES = [s["name"] for s in _PIPELINE_STAGES]
 
 router = APIRouter()
 
@@ -113,6 +129,81 @@ async def get_application(
             for c in application.eligibility_checks
         ],
     )
+
+
+@router.get("/{application_id}/status", response_model=ApplicationStatusResponse)
+async def get_application_status(
+    application_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ApplicationStatusResponse:
+    try:
+        repo = ApplicationRepository(db)
+        application = await repo.get_by_id(application_id)
+        if application is None:
+            raise HTTPException(status_code=404, detail="Application not found")
+
+        if (
+            current_user.role == UserRole.APPLICANT
+            and application.applicant_id != current_user.id
+        ):
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+        # Build pipeline progress
+        current_name = application.status.value
+        # CORRECTION_REQUESTED is treated as active at UNDER_REVIEW stage
+        effective = "UNDER_REVIEW" if current_name == "CORRECTION_REQUESTED" else current_name
+        try:
+            idx = _STAGE_NAMES.index(effective)
+        except ValueError:
+            idx = -1  # DRAFT or unknown: nothing completed yet
+
+        stages = [
+            StageOut(
+                name=s["name"],
+                label_tr=s["label_tr"],
+                label_en=s["label_en"],
+                completed=i < idx,
+                active=i == idx,
+            )
+            for i, s in enumerate(_PIPELINE_STAGES)
+        ]
+
+        # Fetch audit history
+        audit_repo = AuditLogRepository(db)
+        logs = await audit_repo.get_status_history(application_id)
+        history = [
+            HistoryEntry(
+                status=log.new_value.get("status", "") if log.new_value else "",
+                changed_at=log.created_at,
+                changed_by_role=log.actor.role.value if log.actor else None,
+                note=log.new_value.get("note") if log.new_value else None,
+            )
+            for log in logs
+        ]
+
+        # Build result for terminal states
+        result: Optional[ResultOut] = None
+        if application.status == AppStatus.REJECTED:
+            reason = history[0].note if history else None
+            result = ResultOut(outcome="REJECTED", reason=reason)
+        elif application.status == AppStatus.ANNOUNCED:
+            result = ResultOut(outcome="ACCEPTED", reason=None)
+
+        return ApplicationStatusResponse(
+            tracking_number=application.tracking_number,
+            status=current_name,
+            progress=ProgressOut(stages=stages, current_stage=current_name),
+            history=history,
+            result=result,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to retrieve application information. Please try again later.",
+        )
 
 
 @router.post("/{application_id}/fetch-academic-data")
@@ -234,6 +325,27 @@ async def upload_document(
     object_key = f"applications/{application_id}/{doc_type.value}/{uuid.uuid4()}.pdf"
     storage.put_object(object_key, content, "application/pdf")
 
+    # Run extraction before persisting so we can store results immediately.
+    # For doc types that support extraction, always store a dict (even empty)
+    # so the frontend knows extraction was attempted and can prompt the user.
+    _EXTRACTABLE = {
+        DocType.TRANSCRIPT, DocType.YKS_RESULT,
+        DocType.LANGUAGE_CERT, DocType.ID_COPY,
+        DocType.MILITARY_STATUS, DocType.DISCIPLINE_RECORD,
+    }
+    extracted_data: dict | None = None
+    if doc_type in _EXTRACTABLE:
+        from app.external.document_extractor import DocumentExtractor
+        try:
+            extracted_data = await DocumentExtractor().extract(doc_type, content)
+        except Exception:
+            extracted_data = {}
+
+    # Replace any previous upload of the same type so the frontend always
+    # gets fresh extraction data when the user clicks "Replace".
+    doc_repo = DocumentRepository(db)
+    await doc_repo.delete_by_type(application_id, doc_type)
+
     service = DocumentService(db)
     document = await service.confirm_upload(
         application_id=application_id,
@@ -241,6 +353,27 @@ async def upload_document(
         object_key=object_key,
         file_name=file.filename or f"{doc_type.value}.pdf",
         file_size_bytes=len(content),
+        extracted_data=extracted_data,
     )
     return DocumentSummary.model_validate(document)
+
+
+@router.post(
+    "/{application_id}/documents/{document_id}/verify",
+    response_model=VerifyDocumentResponse,
+)
+async def verify_document(
+    application_id: uuid.UUID,
+    document_id: uuid.UUID,
+    current_user: User = Depends(require_role(UserRole.APPLICANT)),
+    db: AsyncSession = Depends(get_db),
+) -> VerifyDocumentResponse:
+    repo = DocumentRepository(db)
+    doc = await repo.get_by_id(document_id)
+    if doc is None or doc.application_id != application_id:
+        raise HTTPException(status_code=404, detail="Document not found")
+    doc.extraction_confirmed = True
+    await db.commit()
+    await db.refresh(doc)
+    return VerifyDocumentResponse(id=doc.id, extraction_confirmed=doc.extraction_confirmed)
 

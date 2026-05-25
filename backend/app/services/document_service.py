@@ -1,6 +1,6 @@
 import uuid
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +48,7 @@ class DocumentService:
         object_key: str,
         file_name: str,
         file_size_bytes: int,
+        extracted_data: Optional[Any] = None,
     ) -> Document:
         if file_size_bytes > _MAX_FILE_SIZE:
             raise HTTPException(
@@ -81,6 +82,8 @@ class DocumentService:
             file_name=file_name,
             file_size_bytes=file_size_bytes,
             status=DocStatus.PENDING,
+            extracted_data=extracted_data,
+            extraction_confirmed=False,
         )
         await self._doc_repo.save(document)
         return document

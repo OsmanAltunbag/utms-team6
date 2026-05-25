@@ -75,3 +75,40 @@ class SubmitApplicationResponse(BaseModel):
 class StatusChangeRequest(BaseModel):
     new_status: AppStatus
     note: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# SPEC-005 — Status / History
+# ---------------------------------------------------------------------------
+
+class StageOut(BaseModel):
+    name: str
+    label_tr: str
+    label_en: str
+    completed: bool
+    active: bool
+
+
+class ProgressOut(BaseModel):
+    stages: List[StageOut]
+    current_stage: str
+
+
+class HistoryEntry(BaseModel):
+    status: str
+    changed_at: datetime
+    changed_by_role: Optional[str]
+    note: Optional[str]
+
+
+class ResultOut(BaseModel):
+    outcome: str
+    reason: Optional[str]
+
+
+class ApplicationStatusResponse(BaseModel):
+    tracking_number: Optional[str]
+    status: str
+    progress: ProgressOut
+    history: List[HistoryEntry]
+    result: Optional[ResultOut]

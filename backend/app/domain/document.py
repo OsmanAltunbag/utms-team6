@@ -1,9 +1,9 @@
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Text, text
-from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, ForeignKey, Text, text
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -38,6 +38,10 @@ class Document(Base):
         server_default=text("'PENDING'"),
     )
     rejection_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    extracted_data: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
+    extraction_confirmed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE")
+    )
     uploaded_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("NOW()")
     )

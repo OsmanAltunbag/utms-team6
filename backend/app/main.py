@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.auth import router as auth_router
 from app.api.applications import router as applications_router
 from app.api.documents import router as documents_router
+from app.api.events import router as events_router
 from app.api.programs import router as programs_router
 from app.core.redis import close_redis
 
@@ -33,4 +34,5 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(applications_router, prefix="/api/applications", tags=["applications"])
 app.include_router(documents_router, prefix="/api/documents", tags=["documents"])
+app.include_router(events_router, prefix="/api/applications", tags=["events"])
 app.include_router(programs_router, prefix="/api", tags=["programs"])
