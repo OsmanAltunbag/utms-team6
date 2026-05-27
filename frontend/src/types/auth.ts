@@ -1,6 +1,7 @@
 export interface TokenResponse {
   token_type: string
   role: string
+  must_change_password: boolean
 }
 
 export interface ApiError {

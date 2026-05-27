@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
 from app.api.applications import router as applications_router
 from app.api.documents import router as documents_router
@@ -32,6 +33,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 app.include_router(applications_router, prefix="/api/applications", tags=["applications"])
 app.include_router(documents_router, prefix="/api/documents", tags=["documents"])
 app.include_router(events_router, prefix="/api/applications", tags=["events"])

@@ -223,3 +223,56 @@ def send_application_confirmation(self, user_id: str, tracking_number: str) -> N
         send_application_confirmation_impl(user_id, tracking_number)
     except Exception as exc:
         raise self.retry(exc=exc, countdown=60)
+
+
+def send_welcome_staff_email_impl(email: str, first_name: str, temp_password: str) -> None:
+    logger.info("Attempting to send welcome staff email to %s", email)
+    login_url = f"{settings.FRONTEND_URL}/login"
+    body = f"""
+      <h2 style="margin:0 0 16px;color:#1a3a6b;font-size:22px;">UTMS Hesabınız Oluşturuldu</h2>
+      <p style="margin:0 0 12px;color:#444;font-size:15px;line-height:1.7;">
+        Merhaba {first_name},<br>
+        Sistem yöneticisi tarafından UTMS personel hesabınız oluşturulmuştur.
+      </p>
+      <p style="margin:0 0 8px;color:#444;font-size:15px;">Geçici giriş bilgileriniz:</p>
+      <table style="margin:0 0 20px;border-collapse:collapse;">
+        <tr>
+          <td style="padding:6px 12px 6px 0;color:#666;font-size:14px;font-weight:bold;">E-posta:</td>
+          <td style="padding:6px 0;color:#333;font-size:14px;">{email}</td>
+        </tr>
+        <tr>
+          <td style="padding:6px 12px 6px 0;color:#666;font-size:14px;font-weight:bold;">Geçici Şifre:</td>
+          <td style="padding:6px 0;color:#333;font-size:14px;font-family:monospace;">{temp_password}</td>
+        </tr>
+      </table>
+      <p style="margin:0 0 20px;color:#e74c3c;font-size:14px;line-height:1.6;">
+        <strong>Önemli:</strong> İlk girişinizde şifrenizi değiştirmeniz zorunludur.
+      </p>
+      <table cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+        <tr>
+          <td style="border-radius:6px;background-color:{_BTN_COLOR};">
+            <a href="{login_url}"
+               style="display:inline-block;padding:14px 36px;color:#ffffff;
+                      font-size:15px;font-weight:700;text-decoration:none;
+                      border-radius:6px;">
+              Giriş Yap
+            </a>
+          </td>
+        </tr>
+      </table>
+    """
+    try:
+        _smtp_send(email, "UTMS — Personel Hesabınız Oluşturuldu", _base_html("Hoş Geldiniz — UTMS", body))
+        logger.info("✅ SUCCESS: Welcome staff email sent to %s", email)
+    except Exception as e:
+        logger.error("❌ ERROR: Failed to send welcome email to %s. Reason: %s", email, e)
+        raise
+
+
+@celery_app.task(name="app.workers.tasks.send_welcome_staff_email", bind=True, max_retries=5)
+def send_welcome_staff_email(self, email: str, first_name: str, temp_password: str) -> None:
+    try:
+        send_welcome_staff_email_impl(email, first_name, temp_password)
+    except Exception as exc:
+        delay = 60 * (2 ** self.request.retries)
+        raise self.retry(exc=exc, countdown=delay)

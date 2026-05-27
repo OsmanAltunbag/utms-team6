@@ -7,6 +7,7 @@ from app.core.dependencies import get_current_user
 from app.core.security import decode_token
 from app.domain.user import User
 from app.schemas.auth import (
+    ChangePasswordRequest,
     ForgotPasswordRequest,
     LoginRequest,
     RegistrationRequest,
@@ -64,7 +65,7 @@ async def login(
     service = AuthService(db)
     pair = await service.login(body.email, body.password, ip)
     _set_auth_cookies(response, pair.access_token, pair.refresh_token)
-    return TokenResponse(role=pair.role)
+    return TokenResponse(role=pair.role, must_change_password=pair.must_change_password)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -162,3 +163,19 @@ async def reset_password(
     service = PasswordResetService(db)
     await service.reset_password(token, body.new_password)
     return {"message": "Password updated successfully"}
+
+
+# ---------------------------------------------------------------------------
+# Force password change on first login (SPEC-017)
+# ---------------------------------------------------------------------------
+
+@router.post("/change-password", status_code=status.HTTP_200_OK)
+async def change_password(
+    body: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Used by staff who must change their temporary password on first login."""
+    service = AuthService(db)
+    await service.change_password(current_user, body.new_password)
+    return {"message": "Password changed successfully"}

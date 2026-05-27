@@ -61,6 +61,17 @@ export async function resetPassword(
   return data
 }
 
+export async function changePassword(
+  new_password: string,
+  new_password_confirm: string,
+): Promise<{ message: string }> {
+  const { data } = await client.post('/auth/change-password', {
+    new_password,
+    new_password_confirm,
+  })
+  return data
+}
+
 export async function logout(): Promise<void> {
   await client.post('/auth/logout')
 }

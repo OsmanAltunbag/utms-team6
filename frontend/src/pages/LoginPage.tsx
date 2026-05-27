@@ -25,9 +25,13 @@ export default function LoginPage() {
     setLoading(true)
     try {
       const res = await login(data)
-      setAuth(res.role, data.email.split('@')[0])
-      toast.success('Welcome back!')
-      navigate('/dashboard', { replace: true })
+      setAuth(res.role, data.email.split('@')[0], res.must_change_password)
+      if (res.must_change_password) {
+        navigate('/change-password', { replace: true })
+      } else {
+        toast.success('Welcome back!')
+        navigate('/dashboard', { replace: true })
+      }
     } catch (err) {
       const status = err instanceof AxiosError ? err.response?.status : null
       if (status === 401) {

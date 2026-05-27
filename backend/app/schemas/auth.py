@@ -27,6 +27,23 @@ class TokenResponse(BaseModel):
 
     token_type: str = "bearer"
     role: str
+    must_change_password: bool = False
+
+
+class ChangePasswordRequest(BaseModel):
+    new_password: str
+    new_password_confirm: str
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        return _validate_password_strength(v)
+
+    @model_validator(mode="after")
+    def passwords_match(self) -> "ChangePasswordRequest":
+        if self.new_password != self.new_password_confirm:
+            raise ValueError("Passwords do not match.")
+        return self
 
 
 class RegistrationRequest(BaseModel):

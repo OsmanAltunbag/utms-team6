@@ -30,6 +30,7 @@ class TokenPair:
     access_jti: str
     refresh_jti: str
     role: str
+    must_change_password: bool = False
 
 
 class AuthService:
@@ -67,6 +68,13 @@ class AuthService:
                 detail=_GENERIC_AUTH_ERROR,
             )
 
+        if not user.is_active:
+            await self._write_audit(user.id, "LOGIN_BLOCKED_INACTIVE", ip, user.role.value)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=_GENERIC_AUTH_ERROR,
+            )
+
         # Block unverified accounts: registration sets is_verified=False;
         # only the email-link flow flips it to True.
         if not user.is_verified:
@@ -97,7 +105,15 @@ class AuthService:
             access_jti=access_jti,
             refresh_jti=refresh_jti,
             role=user.role.value,
+            must_change_password=user.must_change_password,
         )
+
+    async def change_password(self, user: User, new_password: str) -> None:
+        """Update password and clear the must_change_password flag."""
+        from app.core.security import hash_password
+        user.password_hash = hash_password(new_password)
+        user.must_change_password = False
+        await self.db.flush()
 
     async def logout(self, user_id: uuid.UUID, access_jti: str, ip: Optional[str]) -> None:
         """Revoke the access-token JTI and write an audit entry."""

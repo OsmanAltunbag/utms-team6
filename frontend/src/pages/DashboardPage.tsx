@@ -4,8 +4,11 @@ import toast from 'react-hot-toast'
 import {
   Home, FileText, Send, CheckCircle, Clock, Users,
   Settings, BarChart2, Upload, Eye, RefreshCw, PlusCircle,
+  UserPlus, Trash2, Edit2, X, UserCheck,
 } from 'lucide-react'
 import { logout } from '../api/auth'
+import { listStaff, createStaff, updateStaffRole, deactivateStaff, activateStaff } from '../api/admin'
+import type { StaffMember, UserRole as StaffRole } from '../types/admin'
 import {
   listApplications,
   getApplication,
@@ -850,6 +853,398 @@ function StaffDashboardContent({ userName, roleLabel, icon: Icon, onLogout }: {
 }
 
 // ---------------------------------------------------------------------------
+// Admin helpers
+// ---------------------------------------------------------------------------
+
+function extractAdminError(err: unknown, fallback: string): string {
+  const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  if (!detail) return fallback
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail) && detail.length > 0) {
+    const first = detail[0] as { msg?: string }
+    return first?.msg?.replace(/^Value error, /, '') ?? fallback
+  }
+  return fallback
+}
+
+// ---------------------------------------------------------------------------
+// Admin Dashboard — Staff Management
+// ---------------------------------------------------------------------------
+
+const STAFF_ROLES: StaffRole[] = [
+  'STUDENT_AFFAIRS',
+  'TRANSFER_COMMISSION',
+  'YDYO',
+  'DEAN_OFFICE',
+  'SYSTEM_ADMIN',
+]
+
+const STAFF_ROLE_LABELS: Record<StaffRole, string> = {
+  APPLICANT: 'Applicant',
+  STUDENT_AFFAIRS: 'Student Affairs',
+  TRANSFER_COMMISSION: 'Transfer Commission',
+  YDYO: 'Foreign Languages Office',
+  DEAN_OFFICE: "Dean's Office",
+  SYSTEM_ADMIN: 'IT Administrator',
+}
+
+function RoleBadge({ role }: { role: StaffRole }) {
+  const colors: Record<StaffRole, string> = {
+    APPLICANT: 'bg-gray-100 text-gray-700',
+    STUDENT_AFFAIRS: 'bg-blue-100 text-blue-700',
+    TRANSFER_COMMISSION: 'bg-purple-100 text-purple-700',
+    YDYO: 'bg-teal-100 text-teal-700',
+    DEAN_OFFICE: 'bg-orange-100 text-orange-700',
+    SYSTEM_ADMIN: 'bg-red-100 text-red-700',
+  }
+  return (
+    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${colors[role]}`}>
+      {STAFF_ROLE_LABELS[role]}
+    </span>
+  )
+}
+
+function CreateStaffModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [form, setForm] = useState({
+    email: '',
+    first_name: '',
+    last_name: '',
+    role: 'STUDENT_AFFAIRS' as StaffRole,
+    department: '',
+    title: '',
+  })
+  const [loading, setLoading] = useState(false)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    try {
+      await createStaff({
+        ...form,
+        department: form.department || undefined,
+        title: form.title || undefined,
+      })
+      toast.success('Staff account created. Welcome email sent.')
+      onCreated()
+      onClose()
+    } catch (err: unknown) {
+      toast.error(extractAdminError(err, 'Failed to create staff'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function field(label: string, key: keyof typeof form, type = 'text', required = false) {
+    return (
+      <div>
+        <label className="block text-sm text-gray-700 mb-1">{label}{required && <span className="text-red-500 ml-0.5">*</span>}</label>
+        <input
+          type={type}
+          required={required}
+          value={form[key] as string}
+          onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Create Staff Account</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          {field('Email (@iyte.edu.tr / @std.iyte.edu.tr)', 'email', 'email', true)}
+          {field('First Name', 'first_name', 'text', true)}
+          {field('Last Name', 'last_name', 'text', true)}
+          <div>
+            <label className="block text-sm text-gray-700 mb-1">Role<span className="text-red-500 ml-0.5">*</span></label>
+            <select
+              value={form.role}
+              onChange={e => setForm(f => ({ ...f, role: e.target.value as StaffRole }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+            >
+              {STAFF_ROLES.map(r => (
+                <option key={r} value={r}>{STAFF_ROLE_LABELS[r]}</option>
+              ))}
+            </select>
+          </div>
+          {field('Department', 'department')}
+          {field('Title', 'title')}
+          <div className="flex gap-3 pt-2">
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            >
+              {loading ? <Spinner /> : <UserPlus className="w-4 h-4" />}
+              Create Account
+            </button>
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 text-sm rounded-lg hover:bg-gray-50">
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function ChangeRoleModal({ staff, onClose, onUpdated }: { staff: StaffMember; onClose: () => void; onUpdated: () => void }) {
+  const [role, setRole] = useState<StaffRole>(staff.role)
+  const [loading, setLoading] = useState(false)
+
+  async function handleSave() {
+    setLoading(true)
+    try {
+      await updateStaffRole(staff.id, { role })
+      toast.success('Role updated. Session invalidated.')
+      onUpdated()
+      onClose()
+    } catch (err: unknown) {
+      toast.error(extractAdminError(err, 'Failed to update role'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Change Role</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        <p className="text-sm text-gray-600 mb-4">{staff.first_name} {staff.last_name} — {staff.email}</p>
+        <select
+          value={role}
+          onChange={e => setRole(e.target.value as StaffRole)}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white mb-4"
+        >
+          {STAFF_ROLES.map(r => (
+            <option key={r} value={r}>{STAFF_ROLE_LABELS[r]}</option>
+          ))}
+        </select>
+        <div className="flex gap-3">
+          <button
+            onClick={handleSave}
+            disabled={loading || role === staff.role}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          >
+            {loading ? <Spinner /> : null}
+            Save
+          </button>
+          <button onClick={onClose} className="px-4 py-2 border border-gray-300 text-sm rounded-lg hover:bg-gray-50">Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AdminDashboardContent({ userName, onLogout }: { userName: string; onLogout: () => void }) {
+  const [staff, setStaff] = useState<StaffMember[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showCreate, setShowCreate] = useState(false)
+  const [editingStaff, setEditingStaff] = useState<StaffMember | null>(null)
+  const [deactivating, setDeactivating] = useState<string | null>(null)
+  const [activating, setActivating] = useState<string | null>(null)
+
+  async function loadStaff() {
+    try {
+      const list = await listStaff()
+      setStaff(list)
+    } catch {
+      toast.error('Failed to load staff list.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadStaff() }, [])
+
+  async function handleActivate(member: StaffMember) {
+    if (!confirm(`Reactivate ${member.first_name} ${member.last_name}?`)) return
+    setActivating(member.id)
+    try {
+      await activateStaff(member.id)
+      toast.success('Staff reactivated.')
+      await loadStaff()
+    } catch (err: unknown) {
+      toast.error(extractAdminError(err, 'Failed to reactivate staff'))
+    } finally {
+      setActivating(null)
+    }
+  }
+
+  async function handleDeactivate(member: StaffMember) {
+    if (!confirm(`Deactivate ${member.first_name} ${member.last_name}? Their sessions will be revoked immediately.`)) return
+    setDeactivating(member.id)
+    try {
+      await deactivateStaff(member.id)
+      toast.success('Staff deactivated.')
+      await loadStaff()
+    } catch (err: unknown) {
+      toast.error(extractAdminError(err, 'Failed to deactivate staff'))
+    } finally {
+      setDeactivating(null)
+    }
+  }
+
+  const active = staff.filter(s => s.is_active)
+  const inactive = staff.filter(s => !s.is_active)
+
+  return (
+    <div className="flex flex-1 min-h-screen">
+      {showCreate && (
+        <CreateStaffModal onClose={() => setShowCreate(false)} onCreated={loadStaff} />
+      )}
+      {editingStaff && (
+        <ChangeRoleModal staff={editingStaff} onClose={() => setEditingStaff(null)} onUpdated={loadStaff} />
+      )}
+
+      <Sidebar userName={userName} role="IT Administrator" onLogout={onLogout}>
+        <NavBtn active={true} onClick={() => {}} icon={Users} label="Staff Management" />
+        <NavBtn active={false} onClick={() => {}} icon={Settings} label="Settings" />
+      </Sidebar>
+
+      <div className="flex-1 p-8 bg-gray-50">
+        <div className="max-w-5xl mx-auto">
+          <div className="flex items-center justify-between mb-8">
+            <div>
+              <h1 className="text-2xl font-semibold text-gray-900">Staff Management</h1>
+              <p className="text-gray-500 text-sm">Izmir Institute of Technology</p>
+            </div>
+            <button
+              onClick={() => setShowCreate(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors"
+            >
+              <UserPlus className="w-4 h-4" />
+              Add Staff
+            </button>
+          </div>
+
+          {/* Stats */}
+          <div className="grid grid-cols-3 gap-6 mb-8">
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <p className="text-gray-500 text-sm mb-1">Total Staff</p>
+              <p className="text-3xl font-bold text-indigo-600">{staff.length}</p>
+            </div>
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <p className="text-gray-500 text-sm mb-1">Active</p>
+              <p className="text-3xl font-bold text-green-600">{active.length}</p>
+            </div>
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <p className="text-gray-500 text-sm mb-1">Deactivated</p>
+              <p className="text-3xl font-bold text-gray-400">{inactive.length}</p>
+            </div>
+          </div>
+
+          {/* Active staff table */}
+          <div className="bg-white rounded-lg shadow-sm">
+            <div className="px-6 py-4 border-b border-gray-100">
+              <h2 className="text-base font-semibold text-gray-900">Active Staff</h2>
+            </div>
+            {loading ? (
+              <div className="flex justify-center py-12"><Spinner /></div>
+            ) : active.length === 0 ? (
+              <p className="text-gray-400 text-sm text-center py-12">No active staff accounts.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+                    <th className="px-6 py-3 font-medium">Name</th>
+                    <th className="px-6 py-3 font-medium">Email</th>
+                    <th className="px-6 py-3 font-medium">Role</th>
+                    <th className="px-6 py-3 font-medium">Department</th>
+                    <th className="px-6 py-3 font-medium">Created</th>
+                    <th className="px-6 py-3 font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {active.map(member => (
+                    <tr key={member.id} className="border-b border-gray-50 hover:bg-gray-50">
+                      <td className="px-6 py-4 font-medium text-gray-900">
+                        {member.first_name} {member.last_name}
+                        {member.title && <span className="text-gray-400 font-normal ml-1">· {member.title}</span>}
+                      </td>
+                      <td className="px-6 py-4 text-gray-600">{member.email}</td>
+                      <td className="px-6 py-4"><RoleBadge role={member.role} /></td>
+                      <td className="px-6 py-4 text-gray-500">{member.department ?? '—'}</td>
+                      <td className="px-6 py-4 text-gray-400">{new Date(member.created_at).toLocaleDateString()}</td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setEditingStaff(member)}
+                            className="flex items-center gap-1 px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 rounded"
+                          >
+                            <Edit2 className="w-3 h-3" /> Role
+                          </button>
+                          <button
+                            onClick={() => handleDeactivate(member)}
+                            disabled={deactivating === member.id}
+                            className="flex items-center gap-1 px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                          >
+                            {deactivating === member.id ? <Spinner /> : <Trash2 className="w-3 h-3" />}
+                            Deactivate
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Deactivated staff */}
+          {inactive.length > 0 && (
+            <div className="bg-white rounded-lg shadow-sm mt-6">
+              <div className="px-6 py-4 border-b border-gray-100">
+                <h2 className="text-base font-semibold text-gray-400">Deactivated Staff</h2>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+                    <th className="px-6 py-3 font-medium">Name</th>
+                    <th className="px-6 py-3 font-medium">Email</th>
+                    <th className="px-6 py-3 font-medium">Role</th>
+                    <th className="px-6 py-3 font-medium">Department</th>
+                    <th className="px-6 py-3 font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {inactive.map(member => (
+                    <tr key={member.id} className="border-b border-gray-50 opacity-60">
+                      <td className="px-6 py-4 text-gray-500">{member.first_name} {member.last_name}</td>
+                      <td className="px-6 py-4 text-gray-400">{member.email}</td>
+                      <td className="px-6 py-4"><RoleBadge role={member.role} /></td>
+                      <td className="px-6 py-4 text-gray-400">{member.department ?? '—'}</td>
+                      <td className="px-6 py-4">
+                        <button
+                          onClick={() => handleActivate(member)}
+                          disabled={activating === member.id}
+                          className="flex items-center gap-1 px-2 py-1 text-xs text-green-600 hover:bg-green-50 rounded disabled:opacity-50"
+                        >
+                          {activating === member.id ? <Spinner /> : <UserCheck className="w-3 h-3" />}
+                          Activate
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Root
 // ---------------------------------------------------------------------------
 
@@ -882,7 +1277,7 @@ export default function DashboardPage() {
     case 'DEAN_OFFICE':
       return <StaffDashboardContent userName={displayName} roleLabel="Dean's Office" icon={BarChart2} onLogout={handleLogout} />
     case 'SYSTEM_ADMIN':
-      return <StaffDashboardContent userName={displayName} roleLabel="IT Administrator" icon={Settings} onLogout={handleLogout} />
+      return <AdminDashboardContent userName={displayName} onLogout={handleLogout} />
     default:
       return <StaffDashboardContent userName={displayName} roleLabel={roleLabel} icon={Home} onLogout={handleLogout} />
   }
