@@ -214,6 +214,13 @@ class ApplicationService:
         if application is None:
             raise HTTPException(status_code=404, detail="Application not found")
 
+        period = await self._period_repo.get_by_id(application.period_id)
+        if period is None or not period.is_open:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Application period has closed",
+            )
+
         if application.status != AppStatus.DRAFT:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

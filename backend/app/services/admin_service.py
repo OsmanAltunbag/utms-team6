@@ -8,11 +8,71 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.redis import revoke_all_user_jtis
 from app.core.security import hash_password
 from app.domain.audit import AuditLog
+from app.domain.eligibility import DepartmentRequirement
 from app.domain.enums import UserRole
 from app.domain.user import Staff, User
+from app.repositories.eligibility_repository import DepartmentRequirementRepository
+from app.repositories.program_repository import ProgramRepository
 from app.repositories.user_repository import UserRepository
-from app.schemas.admin import StaffCreateRequest
+from app.schemas.admin import ConditionCreateRequest, ConditionUpdateRequest, StaffCreateRequest
 from app.workers.tasks import send_welcome_staff_email_impl
+
+_VALID_RULE_KEYS = {
+    "MIN_GPA",
+    "MIN_YKS",
+    "MIN_CREDITS",
+    "CORE_COURSE_GRADE",
+    "PORTFOLIO_REQUIRED",
+    "REQUIRED_DOC",
+}
+
+_VALID_GRADES = {"AA", "BA", "BB", "CB", "CC", "DC", "DD", "FF"}
+
+
+def _validate_rule_value(rule_key: str, rule_value: str) -> None:
+    if rule_key == "MIN_GPA":
+        try:
+            v = float(rule_value)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid Format: MIN_GPA must be a number",
+            )
+        if not (0.0 <= v <= 4.0):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid value: GPA cannot exceed 4.00",
+            )
+    elif rule_key == "MIN_YKS":
+        try:
+            float(rule_value)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid Format: MIN_YKS must be a number",
+            )
+    elif rule_key == "MIN_CREDITS":
+        try:
+            v = int(rule_value)
+            if v < 0:
+                raise ValueError
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid Format: MIN_CREDITS must be a non-negative integer",
+            )
+    elif rule_key == "CORE_COURSE_GRADE":
+        if rule_value.upper() not in _VALID_GRADES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid Format: CORE_COURSE_GRADE must be one of {sorted(_VALID_GRADES)}",
+            )
+    elif rule_key == "PORTFOLIO_REQUIRED":
+        if rule_value.lower() not in ("true", "false"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid Format: PORTFOLIO_REQUIRED must be 'true' or 'false'",
+            )
 
 _ALLOWED_DOMAINS = ("@iyte.edu.tr", "@std.iyte.edu.tr")
 
@@ -184,3 +244,134 @@ class AdminService:
         await self.db.flush()
 
         return staff
+
+
+class DepartmentConditionService:
+    def __init__(self, db: AsyncSession) -> None:
+        self.db = db
+        self._req_repo = DepartmentRequirementRepository(db)
+        self._prog_repo = ProgramRepository(db)
+
+    async def list_conditions(self, program_id: uuid.UUID) -> list[DepartmentRequirement]:
+        await self._get_program_or_404(program_id)
+        return await self._req_repo.get_by_program(program_id)
+
+    async def add_condition(
+        self,
+        program_id: uuid.UUID,
+        payload: ConditionCreateRequest,
+        created_by: uuid.UUID,
+    ) -> DepartmentRequirement:
+        await self._get_program_or_404(program_id)
+
+        if payload.rule_key not in _VALID_RULE_KEYS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid rule_key. Must be one of: {sorted(_VALID_RULE_KEYS)}",
+            )
+
+        _validate_rule_value(payload.rule_key, payload.rule_value)
+
+        existing = await self._req_repo.get_by_program_and_rule_key(program_id, payload.rule_key)
+        if existing is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Condition already exists",
+            )
+
+        condition = DepartmentRequirement(
+            program_id=program_id,
+            rule_key=payload.rule_key,
+            rule_value=payload.rule_value,
+            description=payload.description,
+            is_active=True,
+        )
+        self.db.add(condition)
+        await self.db.flush()
+
+        log = AuditLog(
+            actor_id=created_by,
+            action="CONDITION_ADDED",
+            entity_type="DepartmentRequirement",
+            entity_id=condition.id,
+            new_value={
+                "program_id": str(program_id),
+                "rule_key": payload.rule_key,
+                "rule_value": payload.rule_value,
+            },
+        )
+        self.db.add(log)
+        await self.db.flush()
+
+        return condition
+
+    async def update_condition(
+        self,
+        program_id: uuid.UUID,
+        condition_id: uuid.UUID,
+        payload: ConditionUpdateRequest,
+        updated_by: uuid.UUID,
+    ) -> DepartmentRequirement:
+        condition = await self._get_condition_or_404(program_id, condition_id)
+
+        if payload.rule_value is not None:
+            _validate_rule_value(condition.rule_key, payload.rule_value)
+            condition.rule_value = payload.rule_value
+
+        if payload.is_active is not None:
+            condition.is_active = payload.is_active
+
+        await self.db.flush()
+
+        log = AuditLog(
+            actor_id=updated_by,
+            action="CONDITION_UPDATED",
+            entity_type="DepartmentRequirement",
+            entity_id=condition_id,
+            new_value=payload.model_dump(exclude_none=True),
+        )
+        self.db.add(log)
+        await self.db.flush()
+
+        return condition
+
+    async def delete_condition(
+        self, program_id: uuid.UUID, condition_id: uuid.UUID, by: uuid.UUID
+    ) -> None:
+        condition = await self._get_condition_or_404(program_id, condition_id)
+
+        log = AuditLog(
+            actor_id=by,
+            action="CONDITION_DELETED",
+            entity_type="DepartmentRequirement",
+            entity_id=condition_id,
+            old_value={
+                "program_id": str(program_id),
+                "rule_key": condition.rule_key,
+                "rule_value": condition.rule_value,
+            },
+        )
+        self.db.add(log)
+        await self.db.flush()
+
+        await self._req_repo.delete(condition)
+
+    async def _get_program_or_404(self, program_id: uuid.UUID):
+        program = await self._prog_repo.get_by_id(program_id)
+        if program is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Program not found",
+            )
+        return program
+
+    async def _get_condition_or_404(
+        self, program_id: uuid.UUID, condition_id: uuid.UUID
+    ) -> DepartmentRequirement:
+        condition = await self._req_repo.get_by_id(condition_id)
+        if condition is None or condition.program_id != program_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Condition not found",
+            )
+        return condition

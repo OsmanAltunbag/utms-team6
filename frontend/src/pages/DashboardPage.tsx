@@ -4,11 +4,19 @@ import toast from 'react-hot-toast'
 import {
   Home, FileText, Send, CheckCircle, Clock, Users,
   Settings, BarChart2, Upload, Eye, RefreshCw, PlusCircle,
-  UserPlus, Trash2, Edit2, X, UserCheck,
+  UserPlus, Trash2, Edit2, X, UserCheck, CalendarDays, ShieldCheck,
 } from 'lucide-react'
 import { logout } from '../api/auth'
-import { listStaff, createStaff, updateStaffRole, deactivateStaff, activateStaff } from '../api/admin'
-import type { StaffMember, UserRole as StaffRole } from '../types/admin'
+import {
+  listStaff, createStaff, updateStaffRole, deactivateStaff, activateStaff,
+  listPeriods, createPeriod, updatePeriod, extendPeriod, emergencyClosePeriod, activatePeriod, deactivatePeriod,
+  listConditions, addCondition, updateCondition, deleteCondition,
+} from '../api/admin'
+import type {
+  StaffMember, UserRole as StaffRole,
+  ApplicationPeriod, PeriodCreatePayload,
+  DepartmentCondition, ConditionCreatePayload, RuleKey,
+} from '../types/admin'
 import {
   listApplications,
   getApplication,
@@ -1044,7 +1052,634 @@ function ChangeRoleModal({ staff, onClose, onUpdated }: { staff: StaffMember; on
   )
 }
 
+// ---------------------------------------------------------------------------
+// Admin Dashboard — Application Periods (SPEC-018)
+// ---------------------------------------------------------------------------
+
+function formatDt(iso: string) {
+  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+function PeriodStatusBadge({ period }: { period: ApplicationPeriod }) {
+  const now = new Date()
+  const opens = new Date(period.opens_at)
+  const closes = new Date(period.closes_at)
+  if (!period.is_active) return <span className="px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-500">Inactive</span>
+  if (now < opens) return <span className="px-2 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-700">Upcoming</span>
+  if (now > closes) return <span className="px-2 py-0.5 rounded-full text-xs bg-red-100 text-red-600">Closed</span>
+  return <span className="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700">Open</span>
+}
+
+function CreatePeriodModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [form, setForm] = useState<PeriodCreatePayload>({ label: '', opens_at: '', closes_at: '' })
+  const [loading, setLoading] = useState(false)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    try {
+      await createPeriod(form)
+      toast.success('Period created.')
+      onCreated()
+      onClose()
+    } catch (err: unknown) {
+      toast.error(extractAdminError(err, 'Failed to create period'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Create Application Period</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div>
+            <label className="block text-sm text-gray-700 mb-1">Label<span className="text-red-500 ml-0.5">*</span></label>
+            <input
+              required
+              value={form.label}
+              onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              placeholder="e.g. Fall 2025 Transfer Period"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-700 mb-1">Opens At<span className="text-red-500 ml-0.5">*</span></label>
+            <input
+              type="datetime-local"
+              required
+              value={form.opens_at}
+              onChange={e => setForm(f => ({ ...f, opens_at: e.target.value }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-700 mb-1">Closes At<span className="text-red-500 ml-0.5">*</span></label>
+            <input
+              type="datetime-local"
+              required
+              value={form.closes_at}
+              onChange={e => setForm(f => ({ ...f, closes_at: e.target.value }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            >
+              {loading ? <Spinner /> : <CalendarDays className="w-4 h-4" />}
+              Create Period
+            </button>
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 text-sm rounded-lg hover:bg-gray-50">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function EditPeriodModal({ period, onClose, onUpdated }: { period: ApplicationPeriod; onClose: () => void; onUpdated: () => void }) {
+  function toLocal(iso: string) {
+    const d = new Date(iso)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
+
+  const [label, setLabel] = useState(period.label)
+  const [opensAt, setOpensAt] = useState(toLocal(period.opens_at))
+  const [closesAt, setClosesAt] = useState(toLocal(period.closes_at))
+  const [loading, setLoading] = useState(false)
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    try {
+      await updatePeriod(period.id, { label, opens_at: opensAt, closes_at: closesAt })
+      toast.success('Period updated.')
+      onUpdated()
+      onClose()
+    } catch (err: unknown) {
+      toast.error(extractAdminError(err, 'Failed to update period'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Edit Period</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={handleSave} className="space-y-3">
+          <div>
+            <label className="block text-sm text-gray-700 mb-1">Label<span className="text-red-500 ml-0.5">*</span></label>
+            <input
+              required
+              value={label}
+              onChange={e => setLabel(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-700 mb-1">Start Date<span className="text-red-500 ml-0.5">*</span></label>
+            <input
+              type="datetime-local"
+              required
+              value={opensAt}
+              onChange={e => setOpensAt(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-700 mb-1">End Date<span className="text-red-500 ml-0.5">*</span></label>
+            <input
+              type="datetime-local"
+              required
+              value={closesAt}
+              onChange={e => setClosesAt(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            >
+              {loading ? <Spinner /> : <Edit2 className="w-4 h-4" />}
+              Save
+            </button>
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 text-sm rounded-lg hover:bg-gray-50">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function ExtendPeriodModal({ period, onClose, onUpdated }: { period: ApplicationPeriod; onClose: () => void; onUpdated: () => void }) {
+  const [newClosesAt, setNewClosesAt] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  async function handleSave() {
+    if (!newClosesAt) return
+    setLoading(true)
+    try {
+      await extendPeriod(period.id, { new_closes_at: newClosesAt })
+      toast.success('Deadline extended.')
+      onUpdated()
+      onClose()
+    } catch (err: unknown) {
+      toast.error(extractAdminError(err, 'Failed to extend deadline'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Extend Deadline</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        <p className="text-sm text-gray-600 mb-1">{period.label}</p>
+        <p className="text-xs text-gray-400 mb-4">Current deadline: {formatDt(period.closes_at)}</p>
+        <div className="mb-4">
+          <label className="block text-sm text-gray-700 mb-1">New Deadline<span className="text-red-500 ml-0.5">*</span></label>
+          <input
+            type="datetime-local"
+            value={newClosesAt}
+            onChange={e => setNewClosesAt(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={handleSave}
+            disabled={loading || !newClosesAt}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          >
+            {loading ? <Spinner /> : null}
+            Extend
+          </button>
+          <button onClick={onClose} className="px-4 py-2 border border-gray-300 text-sm rounded-lg hover:bg-gray-50">Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PeriodsPanel() {
+  const [periods, setPeriods] = useState<ApplicationPeriod[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showCreate, setShowCreate] = useState(false)
+  const [editing, setEditing] = useState<ApplicationPeriod | null>(null)
+  const [extending, setExtending] = useState<ApplicationPeriod | null>(null)
+  const [actionId, setActionId] = useState<string | null>(null)
+
+  async function load() {
+    try {
+      setPeriods(await listPeriods())
+    } catch {
+      toast.error('Failed to load periods.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { load() }, [])
+
+  async function handleToggleActive(period: ApplicationPeriod) {
+    setActionId(period.id)
+    try {
+      if (period.is_active) {
+        await deactivatePeriod(period.id)
+        toast.success('Period deactivated.')
+      } else {
+        await activatePeriod(period.id)
+        toast.success('Period activated.')
+      }
+      await load()
+    } catch (err: unknown) {
+      toast.error(extractAdminError(err, 'Action failed'))
+    } finally {
+      setActionId(null)
+    }
+  }
+
+  async function handleEmergencyClose(period: ApplicationPeriod) {
+    if (!confirm(`Emergency close "${period.label}"? This closes the period immediately.`)) return
+    setActionId(period.id)
+    try {
+      await emergencyClosePeriod(period.id)
+      toast.success('Period emergency-closed.')
+      await load()
+    } catch (err: unknown) {
+      toast.error(extractAdminError(err, 'Action failed'))
+    } finally {
+      setActionId(null)
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      {showCreate && <CreatePeriodModal onClose={() => setShowCreate(false)} onCreated={load} />}
+      {editing && <EditPeriodModal period={editing} onClose={() => setEditing(null)} onUpdated={load} />}
+      {extending && <ExtendPeriodModal period={extending} onClose={() => setExtending(null)} onUpdated={load} />}
+
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Application Periods</h1>
+          <p className="text-gray-500 text-sm">Configure when the transfer portal is open</p>
+        </div>
+        <button
+          onClick={() => setShowCreate(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors"
+        >
+          <PlusCircle className="w-4 h-4" />
+          New Period
+        </button>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm">
+        {loading ? (
+          <div className="flex justify-center py-12"><Spinner /></div>
+        ) : periods.length === 0 ? (
+          <p className="text-gray-400 text-sm text-center py-12">No application periods yet.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+                <th className="px-6 py-3 font-medium">Label</th>
+                <th className="px-6 py-3 font-medium">Opens At</th>
+                <th className="px-6 py-3 font-medium">Closes At</th>
+                <th className="px-6 py-3 font-medium">Status</th>
+                <th className="px-6 py-3 font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {periods.map(p => (
+                <tr key={p.id} className="border-b border-gray-50 hover:bg-gray-50">
+                  <td className="px-6 py-4 font-medium text-gray-900">{p.label}</td>
+                  <td className="px-6 py-4 text-gray-600">{formatDt(p.opens_at)}</td>
+                  <td className="px-6 py-4 text-gray-600">{formatDt(p.closes_at)}</td>
+                  <td className="px-6 py-4"><PeriodStatusBadge period={p} /></td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={() => handleToggleActive(p)}
+                        disabled={actionId === p.id}
+                        className={`flex items-center gap-1 px-2 py-1 text-xs rounded disabled:opacity-50 ${p.is_active ? 'text-gray-600 hover:bg-gray-100' : 'text-green-600 hover:bg-green-50'}`}
+                      >
+                        {actionId === p.id ? <Spinner /> : null}
+                        {p.is_active ? 'Deactivate' : 'Activate'}
+                      </button>
+                      <button
+                        onClick={() => setEditing(p)}
+                        className="flex items-center gap-1 px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 rounded"
+                      >
+                        <Edit2 className="w-3 h-3" /> Edit
+                      </button>
+                      <button
+                        onClick={() => setExtending(p)}
+                        className="flex items-center gap-1 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded"
+                      >
+                        Extend Deadline
+                      </button>
+                      {p.is_active && (
+                        <button
+                          onClick={() => handleEmergencyClose(p)}
+                          disabled={actionId === p.id}
+                          className="flex items-center gap-1 px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                        >
+                          <X className="w-3 h-3" /> Emergency Close
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Admin Dashboard — Department Conditions (SPEC-019)
+// ---------------------------------------------------------------------------
+
+const RULE_KEYS: RuleKey[] = ['MIN_GPA', 'MIN_YKS', 'MIN_CREDITS', 'CORE_COURSE_GRADE', 'PORTFOLIO_REQUIRED', 'REQUIRED_DOC']
+const RULE_KEY_LABELS: Record<RuleKey, string> = {
+  MIN_GPA: 'Minimum GPA',
+  MIN_YKS: 'Minimum YKS Score',
+  MIN_CREDITS: 'Minimum Credits',
+  CORE_COURSE_GRADE: 'Core Course Grade',
+  PORTFOLIO_REQUIRED: 'Portfolio Required',
+  REQUIRED_DOC: 'Required Document',
+}
+const RULE_KEY_PLACEHOLDER: Record<RuleKey, string> = {
+  MIN_GPA: '0.00 – 4.00',
+  MIN_YKS: 'e.g. 350.0',
+  MIN_CREDITS: 'e.g. 60',
+  CORE_COURSE_GRADE: 'AA / BA / BB / CB / CC / DC / DD',
+  PORTFOLIO_REQUIRED: 'true or false',
+  REQUIRED_DOC: 'e.g. PORTFOLIO',
+}
+
+function AddConditionModal({ programId, onClose, onAdded }: { programId: string; onClose: () => void; onAdded: () => void }) {
+  const [form, setForm] = useState<ConditionCreatePayload>({ rule_key: 'MIN_GPA', rule_value: '', description: '' })
+  const [loading, setLoading] = useState(false)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    try {
+      await addCondition(programId, { ...form, description: form.description || undefined })
+      toast.success('Condition added.')
+      onAdded()
+      onClose()
+    } catch (err: unknown) {
+      toast.error(extractAdminError(err, 'Failed to add condition'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Add Condition</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div>
+            <label className="block text-sm text-gray-700 mb-1">Rule<span className="text-red-500 ml-0.5">*</span></label>
+            <select
+              value={form.rule_key}
+              onChange={e => setForm(f => ({ ...f, rule_key: e.target.value as RuleKey, rule_value: '' }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+            >
+              {RULE_KEYS.map(k => <option key={k} value={k}>{RULE_KEY_LABELS[k]}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm text-gray-700 mb-1">Value<span className="text-red-500 ml-0.5">*</span></label>
+            <input
+              required
+              value={form.rule_value}
+              onChange={e => setForm(f => ({ ...f, rule_value: e.target.value }))}
+              placeholder={RULE_KEY_PLACEHOLDER[form.rule_key]}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-700 mb-1">Description</label>
+            <input
+              value={form.description ?? ''}
+              onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            >
+              {loading ? <Spinner /> : <PlusCircle className="w-4 h-4" />}
+              Add Condition
+            </button>
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 text-sm rounded-lg hover:bg-gray-50">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function ConditionsPanel() {
+  const [programs, setPrograms] = useState<ProgramOption[]>([])
+  const [selectedProgramId, setSelectedProgramId] = useState<string>('')
+  const [conditions, setConditions] = useState<DepartmentCondition[]>([])
+  const [loading, setLoading] = useState(false)
+  const [loadingPrograms, setLoadingPrograms] = useState(true)
+  const [showAdd, setShowAdd] = useState(false)
+  const [actionId, setActionId] = useState<string | null>(null)
+
+  useEffect(() => {
+    listPrograms()
+      .then(progs => {
+        setPrograms(progs)
+        if (progs.length > 0) setSelectedProgramId(progs[0].id)
+      })
+      .catch(() => toast.error('Failed to load programs.'))
+      .finally(() => setLoadingPrograms(false))
+  }, [])
+
+  useEffect(() => {
+    if (!selectedProgramId) return
+    loadConditions(selectedProgramId)
+  }, [selectedProgramId])
+
+  async function loadConditions(programId: string) {
+    setLoading(true)
+    try {
+      setConditions(await listConditions(programId))
+    } catch {
+      toast.error('Failed to load conditions.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleToggleActive(c: DepartmentCondition) {
+    setActionId(c.id)
+    try {
+      await updateCondition(selectedProgramId, c.id, { is_active: !c.is_active })
+      toast.success(c.is_active ? 'Condition deactivated.' : 'Condition activated.')
+      await loadConditions(selectedProgramId)
+    } catch (err: unknown) {
+      toast.error(extractAdminError(err, 'Action failed'))
+    } finally {
+      setActionId(null)
+    }
+  }
+
+  async function handleDelete(c: DepartmentCondition) {
+    if (!confirm(`Permanently delete rule "${RULE_KEY_LABELS[c.rule_key]}: ${c.rule_value}"?`)) return
+    setActionId(c.id)
+    try {
+      await deleteCondition(selectedProgramId, c.id)
+      toast.success('Condition deleted.')
+      await loadConditions(selectedProgramId)
+    } catch (err: unknown) {
+      toast.error(extractAdminError(err, 'Failed to delete condition'))
+    } finally {
+      setActionId(null)
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      {showAdd && selectedProgramId && (
+        <AddConditionModal
+          programId={selectedProgramId}
+          onClose={() => setShowAdd(false)}
+          onAdded={() => loadConditions(selectedProgramId)}
+        />
+      )}
+
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Department Conditions</h1>
+          <p className="text-gray-500 text-sm">Eligibility rules per program</p>
+        </div>
+        <button
+          onClick={() => setShowAdd(true)}
+          disabled={!selectedProgramId}
+          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
+        >
+          <PlusCircle className="w-4 h-4" />
+          Add Condition
+        </button>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm p-4">
+        {loadingPrograms ? (
+          <Spinner />
+        ) : (
+          <div className="flex items-center gap-3">
+            <label className="text-sm text-gray-700 whitespace-nowrap">Program:</label>
+            <select
+              value={selectedProgramId}
+              onChange={e => setSelectedProgramId(e.target.value)}
+              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+            >
+              {programs.length === 0 && <option value="">No programs</option>}
+              {programs.map(p => (
+                <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm">
+        {loading ? (
+          <div className="flex justify-center py-12"><Spinner /></div>
+        ) : conditions.length === 0 ? (
+          <p className="text-gray-400 text-sm text-center py-12">No conditions for this program.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+                <th className="px-6 py-3 font-medium">Rule</th>
+                <th className="px-6 py-3 font-medium">Value</th>
+                <th className="px-6 py-3 font-medium">Description</th>
+                <th className="px-6 py-3 font-medium">Status</th>
+                <th className="px-6 py-3 font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {conditions.map(c => (
+                <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50">
+                  <td className="px-6 py-4 font-medium text-gray-900">{RULE_KEY_LABELS[c.rule_key]}</td>
+                  <td className="px-6 py-4 text-gray-700 font-mono">{c.rule_value}</td>
+                  <td className="px-6 py-4 text-gray-500">{c.description ?? '—'}</td>
+                  <td className="px-6 py-4">
+                    {c.is_active
+                      ? <span className="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700">Active</span>
+                      : <span className="px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-500">Inactive</span>}
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleToggleActive(c)}
+                        disabled={actionId === c.id}
+                        className={`flex items-center gap-1 px-2 py-1 text-xs rounded disabled:opacity-50 ${c.is_active ? 'text-gray-600 hover:bg-gray-100' : 'text-green-600 hover:bg-green-50'}`}
+                      >
+                        {actionId === c.id ? <Spinner /> : null}
+                        {c.is_active ? 'Deactivate' : 'Activate'}
+                      </button>
+                      <button
+                        onClick={() => handleDelete(c)}
+                        disabled={actionId === c.id}
+                        className="flex items-center gap-1 px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                      >
+                        {actionId === c.id ? <Spinner /> : <Trash2 className="w-3 h-3" />}
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Admin Dashboard — Staff Management
+// ---------------------------------------------------------------------------
+
 function AdminDashboardContent({ userName, onLogout }: { userName: string; onLogout: () => void }) {
+  const [activeTab, setActiveTab] = useState<'staff' | 'periods' | 'conditions'>('staff')
   const [staff, setStaff] = useState<StaffMember[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
@@ -1106,12 +1741,18 @@ function AdminDashboardContent({ userName, onLogout }: { userName: string; onLog
       )}
 
       <Sidebar userName={userName} role="IT Administrator" onLogout={onLogout}>
-        <NavBtn active={true} onClick={() => {}} icon={Users} label="Staff Management" />
-        <NavBtn active={false} onClick={() => {}} icon={Settings} label="Settings" />
+        <NavBtn active={activeTab === 'staff'} onClick={() => setActiveTab('staff')} icon={Users} label="Staff Management" />
+        <NavBtn active={activeTab === 'periods'} onClick={() => setActiveTab('periods')} icon={CalendarDays} label="App. Periods" />
+        <NavBtn active={activeTab === 'conditions'} onClick={() => setActiveTab('conditions')} icon={ShieldCheck} label="Dept. Conditions" />
       </Sidebar>
 
       <div className="flex-1 p-8 bg-gray-50">
         <div className="max-w-5xl mx-auto">
+
+          {activeTab === 'periods' && <PeriodsPanel />}
+          {activeTab === 'conditions' && <ConditionsPanel />}
+
+          {activeTab === 'staff' && <>
           <div className="flex items-center justify-between mb-8">
             <div>
               <h1 className="text-2xl font-semibold text-gray-900">Staff Management</h1>
@@ -1238,6 +1879,8 @@ function AdminDashboardContent({ userName, onLogout }: { userName: string; onLog
               </table>
             </div>
           )}
+          </>}
+
         </div>
       </div>
     </div>
