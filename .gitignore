@@ -39,4 +39,9 @@ htmlcov/
 # Claude Code local config
 .claude/
 node_modules/
-frontend/node_modules/
+**/node_modules/
+frontend/dist/
+
+# Local / generated artifacts
+_srs_extract.txt
+agent-tools/
