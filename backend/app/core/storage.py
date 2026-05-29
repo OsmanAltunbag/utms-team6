@@ -21,10 +21,33 @@ class MinIOClient:
             self._bucket, object_key, expires=timedelta(seconds=ttl)
         )
 
-    def generate_presigned_get(self, object_key: str, ttl: int = 300) -> str:
+    def generate_presigned_get(
+        self,
+        object_key: str,
+        ttl: int = 300,
+        *,
+        inline: bool = False,
+        file_name: str | None = None,
+    ) -> str:
+        response_headers: dict[str, str] | None = None
+        if inline:
+            disposition = "inline"
+            if file_name:
+                disposition = f'inline; filename="{file_name}"'
+            response_headers = {"response-content-disposition": disposition}
         return self._client.presigned_get_object(
-            self._bucket, object_key, expires=timedelta(seconds=ttl)
+            self._bucket,
+            object_key,
+            expires=timedelta(seconds=ttl),
+            response_headers=response_headers,
         )
+
+    def object_exists(self, object_key: str) -> bool:
+        try:
+            self._client.stat_object(self._bucket, object_key)
+            return True
+        except Exception:
+            return False
 
     def get_object(self, object_key: str):
         return self._client.get_object(self._bucket, object_key)

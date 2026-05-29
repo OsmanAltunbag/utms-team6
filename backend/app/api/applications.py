@@ -26,6 +26,8 @@ from app.schemas.application import (
     StatusChangeRequest,
     SubmitApplicationResponse,
 )
+from app.schemas.officer import ResubmitCorrectionResponse
+from app.schemas.notification import NotificationLogEntry, NotificationLogResponse
 from app.schemas.document import (
     ConfirmUploadRequest,
     DocumentSummary,
@@ -34,7 +36,9 @@ from app.schemas.document import (
     VerifyDocumentResponse,
 )
 from app.services.application_service import ApplicationService
-from app.services.document_service import DocumentService
+from app.services.document_service import DocumentService, is_allowed_upload, resolve_content_type
+from app.services.notification_service import NotificationService
+from app.core.status_labels import srs_display_status
 
 _PIPELINE_STAGES = [
     {"name": "SUBMITTED",      "label_tr": "Başvuru Alındı",        "label_en": "Submitted"},
@@ -188,7 +192,15 @@ async def get_application_status(
             reason = history[0].note if history else None
             result = ResultOut(outcome="REJECTED", reason=reason)
         elif application.status == AppStatus.ANNOUNCED:
-            result = ResultOut(outcome="ACCEPTED", reason=None)
+            if application.ranking_entry is not None:
+                outcome = (
+                    "ACCEPTED"
+                    if application.ranking_entry.is_primary
+                    else "WAITLISTED"
+                )
+            else:
+                outcome = "REJECTED"
+            result = ResultOut(outcome=outcome, reason=None)
 
         return ApplicationStatusResponse(
             tracking_number=application.tracking_number,
@@ -227,6 +239,62 @@ async def submit_application(
     return SubmitApplicationResponse(
         tracking_number=application.tracking_number,
         status=application.status.value,
+    )
+
+
+@router.post(
+    "/{application_id}/resubmit-correction",
+    response_model=ResubmitCorrectionResponse,
+)
+async def resubmit_after_correction(
+    application_id: uuid.UUID,
+    current_user: User = Depends(require_role(UserRole.APPLICANT)),
+    db: AsyncSession = Depends(get_db),
+) -> ResubmitCorrectionResponse:
+    service = ApplicationService(db)
+    application = await service.resubmit_after_correction(
+        application_id=application_id,
+        applicant_id=current_user.id,
+    )
+    return ResubmitCorrectionResponse(
+        application_id=application.id,
+        status=application.status.value,
+        display_status=srs_display_status(application.status),
+    )
+
+
+@router.get(
+    "/{application_id}/notifications",
+    response_model=NotificationLogResponse,
+)
+async def get_notification_log(
+    application_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> NotificationLogResponse:
+    """Communication / delivery log for an application (SPEC-020)."""
+    app_repo = ApplicationRepository(db)
+    application = await app_repo.get_by_id(application_id)
+    if application is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    if current_user.role == UserRole.APPLICANT:
+        if application.applicant_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+    elif current_user.role not in {
+        UserRole.STUDENT_AFFAIRS,
+        UserRole.SYSTEM_ADMIN,
+        UserRole.TRANSFER_COMMISSION,
+        UserRole.YDYO,
+        UserRole.DEAN_OFFICE,
+    }:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+    service = NotificationService(db)
+    notifications = await service.get_delivery_log(application_id)
+    return NotificationLogResponse(
+        application_id=application_id,
+        notifications=[NotificationLogEntry.model_validate(n) for n in notifications],
     )
 
 
@@ -316,14 +384,24 @@ async def upload_document(
     storage: MinIOClient = Depends(get_minio_client),
 ) -> DocumentSummary:
     _MAX_SIZE = 5_242_880
-    if file.content_type != "application/pdf":
-        raise HTTPException(status_code=422, detail="Only PDF files are accepted.")
     content = await file.read()
     if len(content) > _MAX_SIZE:
         raise HTTPException(status_code=422, detail="File exceeds 5 MB limit.")
+    if not is_allowed_upload(file.filename or "", file.content_type):
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid file format. Please upload a PDF or image file (JPG/PNG).",
+        )
 
-    object_key = f"applications/{application_id}/{doc_type.value}/{uuid.uuid4()}.pdf"
-    storage.put_object(object_key, content, "application/pdf")
+    ext = ".pdf"
+    if file.content_type in {"image/jpeg", "image/jpg"} or (file.filename or "").lower().endswith((".jpg", ".jpeg")):
+        ext = ".jpg"
+    elif file.content_type == "image/png" or (file.filename or "").lower().endswith(".png"):
+        ext = ".png"
+
+    upload_mime = resolve_content_type(file.filename or f"{doc_type.value}{ext}", file.content_type)
+    object_key = f"applications/{application_id}/{doc_type.value}/{uuid.uuid4()}{ext}"
+    storage.put_object(object_key, content, upload_mime)
 
     # Run extraction before persisting so we can store results immediately.
     # For doc types that support extraction, always store a dict (even empty)

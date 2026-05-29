@@ -13,6 +13,7 @@ import {
   createApplication,
   fetchAcademicData,
   submitApplication,
+  resubmitAfterCorrection,
   listDocuments,
   uploadDocument,
   verifyDocument,
@@ -22,6 +23,8 @@ import {
   type ProgramOption,
   type PeriodOption,
 } from '../api/applications'
+import StudentAffairsDashboard from './StudentAffairsDashboard'
+import { NotificationLogPanel } from '../components/NotificationLogPanel'
 import { useAuth } from '../context/AuthContext'
 import { Sidebar } from '../components/Sidebar'
 import { StatusBadge } from '../components/StatusBadge'
@@ -337,8 +340,8 @@ function DocumentUploadRow({
     const file = e.target.files?.[0]
     if (!file) return
 
-    if (file.type !== 'application/pdf') {
-      toast.error('Invalid file format. Please upload a PDF file.')
+    if (file.type !== 'application/pdf' && !file.type.startsWith('image/')) {
+      toast.error('Invalid file format. Please upload a PDF or image file (JPG/PNG).')
       return
     }
     if (file.size > 5_242_880) {
@@ -391,7 +394,7 @@ function DocumentUploadRow({
           <input
             ref={fileInputRef}
             type="file"
-            accept="application/pdf"
+            accept="application/pdf,image/jpeg,image/png,image/jpg"
             className="hidden"
             onChange={handleFileChange}
           />
@@ -433,6 +436,7 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
   const [loadingApp, setLoadingApp] = useState(true)
   const [fetchingAcademic, setFetchingAcademic] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [resubmitting, setResubmitting] = useState(false)
   const [hasNoApp, setHasNoApp] = useState(false)
 
   async function loadApplication(id?: string) {
@@ -506,6 +510,20 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
     }
   }
 
+  async function handleResubmitCorrection() {
+    if (!application) return
+    setResubmitting(true)
+    try {
+      await resubmitAfterCorrection(application.id)
+      toast.success('Corrected documents resubmitted for review.')
+      await loadApplication(application.id)
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setResubmitting(false)
+    }
+  }
+
   async function handleDocUploaded() {
     if (application) {
       const docs = await listDocuments(application.id)
@@ -526,7 +544,7 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
       <Sidebar userName={userName} role="Applicant" onLogout={onLogout}>
         <NavBtn active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} icon={Home} label="Overview" />
         <NavBtn active={activeTab === 'application'} onClick={() => setActiveTab('application')} icon={FileText} label="My Application" />
-        <NavBtn active={activeTab === 'messages'} onClick={() => setActiveTab('messages')} icon={Send} label="Messages" />
+        <NavBtn active={activeTab === 'messages'} onClick={() => setActiveTab('messages')} icon={Send} label="Notifications" />
         <NavBtn active={activeTab === 'results'} onClick={() => setActiveTab('results')} icon={CheckCircle} label="Results" />
       </Sidebar>
 
@@ -548,7 +566,10 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
                       <Clock className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
                       <div>
                         <p className="text-sm font-medium text-yellow-800">Correction Required</p>
-                        <p className="text-xs text-yellow-700 mt-0.5">Your documents need corrections. Please upload the updated files in the Documents tab.</p>
+                        <p className="text-xs text-yellow-700 mt-0.5">
+                          {appStatus?.history.find(h => h.status === 'CORRECTION_REQUESTED')?.note
+                            ?? 'Your documents need corrections. Upload updated files, then resubmit.'}
+                        </p>
                       </div>
                     </div>
                   )}
@@ -725,7 +746,7 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
                   {/* Documents */}
                   <div className="bg-white rounded-lg shadow-sm p-6">
                     <h2 className="text-lg font-semibold text-gray-900 mb-1">Documents</h2>
-                    <p className="text-gray-500 text-xs mb-4">PDF only · max 5 MB per file · required: Transcript, YKS Result, ID Copy</p>
+                    <p className="text-gray-500 text-xs mb-4">PDF or JPG/PNG · max 5 MB per file · required: Transcript, YKS Result, ID Copy</p>
                     <div>
                       {([...REQUIRED_DOCS, 'LANGUAGE_CERT', 'MILITARY_STATUS', 'DISCIPLINE_RECORD'] as DocType[]).map((dt) => (
                         <DocumentUploadRow
@@ -738,6 +759,23 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
                       ))}
                     </div>
                   </div>
+
+                  {application.status === 'CORRECTION_REQUESTED' && (
+                    <div className="bg-white rounded-lg shadow-sm p-6">
+                      <h2 className="text-lg font-semibold text-gray-900 mb-2">Resubmit After Correction</h2>
+                      <p className="text-gray-500 text-sm mb-4">
+                        After uploading corrected documents, resubmit your application for officer review.
+                      </p>
+                      <button
+                        onClick={handleResubmitCorrection}
+                        disabled={resubmitting}
+                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                      >
+                        {resubmitting ? <Spinner /> : <Send className="w-4 h-4" />}
+                        Resubmit Application
+                      </button>
+                    </div>
+                  )}
 
                   {/* Submit */}
                   {application.status === 'DRAFT' && (
@@ -764,8 +802,9 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
           {/* ── Messages tab ──────────────────────────────────────────── */}
           {activeTab === 'messages' && (
             <div className="bg-white rounded-lg shadow-sm p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Messages with Student Affairs</h2>
-              <p className="text-gray-500 text-sm">No messages yet.</p>
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Notifications</h2>
+              <p className="text-gray-500 text-sm mb-4">Email notifications sent about your application.</p>
+              <NotificationLogPanel applicationId={application?.id ?? null} />
             </div>
           )}
 
@@ -774,9 +813,36 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
             <div className="bg-white rounded-lg shadow-sm p-6">
               {application?.status === 'ANNOUNCED' ? (
                 <div className="text-center py-8">
-                  <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
-                  <h3 className="text-gray-900 font-semibold mb-1">Transfer Accepted</h3>
-                  <p className="text-gray-500 text-sm">Congratulations! Your transfer application has been approved.</p>
+                  {appStatus?.result?.outcome === 'WAITLISTED' ? (
+                    <>
+                      <Clock className="w-12 h-12 text-yellow-500 mx-auto mb-4" />
+                      <h3 className="text-gray-900 font-semibold mb-1">Waitlisted (Yedek)</h3>
+                      <p className="text-gray-500 text-sm">
+                        You have been placed on the reserve list. You will be contacted if a quota becomes available.
+                      </p>
+                    </>
+                  ) : appStatus?.result?.outcome === 'REJECTED' ? (
+                    <>
+                      <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <span className="text-red-600 text-2xl font-bold">✗</span>
+                      </div>
+                      <h3 className="text-gray-900 font-semibold mb-1">Not Placed</h3>
+                      <p className="text-gray-500 text-sm">
+                        Unfortunately, you were not placed on the final transfer list for this period.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
+                      <h3 className="text-gray-900 font-semibold mb-1">Transfer Accepted (Asil)</h3>
+                      <p className="text-gray-500 text-sm">
+                        Congratulations! You have been accepted for horizontal transfer.
+                      </p>
+                    </>
+                  )}
+                  {application.tracking_number && (
+                    <p className="text-xs text-gray-400 mt-4">Tracking: {application.tracking_number}</p>
+                  )}
                 </div>
               ) : application?.status === 'REJECTED' ? (
                 <div className="text-center py-8">
@@ -874,7 +940,7 @@ export default function DashboardPage() {
     case 'APPLICANT':
       return <ApplicantDashboardContent userName={displayName} onLogout={handleLogout} />
     case 'STUDENT_AFFAIRS':
-      return <StaffDashboardContent userName={displayName} roleLabel="Student Affairs" icon={FileText} onLogout={handleLogout} />
+      return <StudentAffairsDashboard userName={displayName} onLogout={handleLogout} />
     case 'TRANSFER_COMMISSION':
       return <StaffDashboardContent userName={displayName} roleLabel="Transfer Commission" icon={Users} onLogout={handleLogout} />
     case 'YDYO':

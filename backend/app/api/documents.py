@@ -10,6 +10,7 @@ from app.core.dependencies import get_current_user
 from app.core.storage import MinIOClient, get_minio_client
 from app.domain.document import Document
 from app.domain.user import User
+from app.services.document_service import resolve_content_type
 
 router = APIRouter()
 
@@ -28,12 +29,14 @@ async def stream_document(
 
     try:
         response = storage.get_object(doc.file_path)
+        meta = storage.get_object_metadata(doc.file_path)
+        content_type = resolve_content_type(doc.file_name, meta.get("content_type"))
     except Exception:
         raise HTTPException(status_code=404, detail="File not found in storage")
 
-    file_name = doc.file_name or "document.pdf"
+    file_name = doc.file_name or "document"
     return StreamingResponse(
         response,
-        media_type="application/pdf",
+        media_type=content_type,
         headers={"Content-Disposition": f'inline; filename="{file_name}"'},
     )

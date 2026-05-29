@@ -46,5 +46,8 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
     FROM_EMAIL: str = "UTMS <noreply@iyte.edu.tr>"
 
+    # Officer document correction window (days)
+    CORRECTION_DEADLINE_DAYS: int = 7
+
 
 settings = Settings()

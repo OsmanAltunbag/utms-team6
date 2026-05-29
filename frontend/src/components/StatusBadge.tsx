@@ -9,6 +9,8 @@ const statusStyles: Record<string, string> = {
   rejected: 'bg-red-100 text-red-800',
   'under review': 'bg-yellow-100 text-yellow-800',
   submitted: 'bg-indigo-100 text-indigo-800',
+  verified: 'bg-green-100 text-green-800',
+  'correction requested': 'bg-orange-100 text-orange-800',
   'foreign languages review': 'bg-purple-100 text-purple-800',
 }
 

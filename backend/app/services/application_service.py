@@ -24,13 +24,17 @@ logger = logging.getLogger(__name__)
 # Legal status transitions: maps current status → allowed next statuses
 _TRANSITIONS: dict[AppStatus, set[AppStatus]] = {
     AppStatus.DRAFT: {AppStatus.SUBMITTED},
-    AppStatus.SUBMITTED: {AppStatus.UNDER_REVIEW, AppStatus.REJECTED},
+    AppStatus.SUBMITTED: {
+        AppStatus.UNDER_REVIEW,
+        AppStatus.CORRECTION_REQUESTED,
+        AppStatus.REJECTED,
+    },
     AppStatus.UNDER_REVIEW: {
         AppStatus.ENGLISH_REVIEW,
         AppStatus.CORRECTION_REQUESTED,
         AppStatus.REJECTED,
     },
-    AppStatus.CORRECTION_REQUESTED: {AppStatus.UNDER_REVIEW},
+    AppStatus.CORRECTION_REQUESTED: {AppStatus.SUBMITTED, AppStatus.REJECTED},
     AppStatus.ENGLISH_REVIEW: {AppStatus.DEPT_EVAL, AppStatus.REJECTED},
     AppStatus.DEPT_EVAL: {AppStatus.RANKING, AppStatus.REJECTED},
     AppStatus.RANKING: {AppStatus.ANNOUNCED, AppStatus.REJECTED},
@@ -253,11 +257,22 @@ class ApplicationService:
             note="Applicant submitted",
         )
 
-        # Enqueue confirmation notification
+        # Enqueue confirmation notification via NotificationService (SPEC-020)
         try:
-            from app.workers.tasks import send_application_confirmation
-            send_application_confirmation.delay(
-                str(application.applicant_id), tracking_number
+            from app.services.notification_service import NotificationService
+
+            program_name = application.program.name if application.program else "Program"
+            notif_service = NotificationService(self.db)
+            await notif_service.enqueue(
+                user_id=application.applicant_id,
+                subject="UTMS — Başvurunuz Alındı",
+                body=f"Tracking number: {tracking_number}",
+                application_id=application.id,
+                template_name="application_submitted.html",
+                template_context={
+                    "tracking_number": tracking_number,
+                    "program_name": program_name,
+                },
             )
         except Exception:
             logger.warning("Failed to enqueue submission notification for %s", application_id)
@@ -276,6 +291,36 @@ class ApplicationService:
             raise HTTPException(status_code=404, detail="Application not found")
 
         await self._change_status_internal(application, new_status, actor_id, note)
+        return application
+
+    async def resubmit_after_correction(
+        self, application_id: uuid.UUID, applicant_id: uuid.UUID
+    ) -> Application:
+        application = await self._app_repo.get_by_id(application_id)
+        if application is None:
+            raise HTTPException(status_code=404, detail="Application not found")
+
+        if application.applicant_id != applicant_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions",
+            )
+
+        if application.status != AppStatus.CORRECTION_REQUESTED:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Only applications awaiting correction can be resubmitted",
+            )
+
+        await self._change_status_internal(
+            application,
+            AppStatus.SUBMITTED,
+            actor_id=applicant_id,
+            note="Applicant resubmitted corrected documents",
+        )
+        application.correction_deadline = None
+        application.correction_requested_at = None
+        await self.db.flush()
         return application
 
     # ------------------------------------------------------------------

@@ -1,9 +1,9 @@
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import ForeignKey, Integer, Text, text
-from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
+from sqlalchemy import ForeignKey, Integer, String, Text, text
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -34,6 +34,8 @@ class Notification(Base):
     )
     subject: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     body: Mapped[str] = mapped_column(Text, nullable=False)
+    template_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    template_context: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
     status: Mapped[NotifStatus] = mapped_column(
         notif_status_type,
         nullable=False,
@@ -49,6 +51,7 @@ class Notification(Base):
     sent_at: Mapped[Optional[datetime]] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("NOW()")
     )

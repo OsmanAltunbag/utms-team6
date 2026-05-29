@@ -82,6 +82,22 @@ export async function submitApplication(applicationId: string): Promise<SubmitRe
   return data
 }
 
+export async function resubmitAfterCorrection(applicationId: string): Promise<{
+  application_id: string
+  status: string
+  display_status: string
+}> {
+  const { data } = await client.post(`/applications/${applicationId}/resubmit-correction`)
+  return data
+}
+
+export async function getNotificationLog(applicationId: string) {
+  const { data } = await client.get<import('../types/notification').NotificationLogResponse>(
+    `/applications/${applicationId}/notifications`,
+  )
+  return data
+}
+
 export async function verifyDocument(
   applicationId: string,
   documentId: string,

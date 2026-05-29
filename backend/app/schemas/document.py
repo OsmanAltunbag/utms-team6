@@ -39,6 +39,9 @@ class DocumentSummary(BaseModel):
 
 class PreviewUrlResponse(BaseModel):
     preview_url: str
+    viewable: bool = True
+    content_type: str = "application/pdf"
+    error_message: Optional[str] = None
 
 
 class VerifyDocumentResponse(BaseModel):

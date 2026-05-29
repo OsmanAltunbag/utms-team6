@@ -102,24 +102,25 @@ services:
     command: >
       sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
-  # ── Celery worker (uncomment when SPEC-019 is implemented) ────────────────
-  # celery-worker:
-  #   build:
-  #     context: ./backend
-  #     dockerfile: Dockerfile
-  #   restart: unless-stopped
-  #   env_file: .env
-  #   environment:
-  #     DATABASE_URL: postgresql+asyncpg://utms:utms@db:5432/utms
-  #     REDIS_URL: redis://redis:6379/0
-  #     CELERY_BROKER_URL: redis://redis:6379/1
-  #     CELERY_RESULT_BACKEND: redis://redis:6379/2
-  #   depends_on:
-  #     db:
-  #       condition: service_healthy
-  #     redis:
-  #       condition: service_healthy
-  #   command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
+  # ── Celery worker (SPEC-020 notification delivery) ────────────────────────
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://utms:utms@db:5432/utms
+      DATABASE_URL_SYNC: postgresql+psycopg2://utms:utms@db:5432/utms
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
 
 volumes:
   pg_data:

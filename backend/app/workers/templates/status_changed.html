@@ -1,0 +1,10 @@
+<h2 style="margin:0 0 16px;color:#1a3a6b;font-size:22px;">Application Status Update</h2>
+<p style="margin:0 0 12px;color:#444;font-size:15px;line-height:1.7;">
+  Your application status has changed from
+  <strong>{{ old_status | default("—") }}</strong>
+  to
+  <strong>{{ new_status }}</strong>.
+</p>
+{% if note %}
+<p style="margin:0;color:#666;font-size:14px;line-height:1.6;">{{ note }}</p>
+{% endif %}
