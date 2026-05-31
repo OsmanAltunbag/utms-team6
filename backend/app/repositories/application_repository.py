@@ -72,6 +72,23 @@ class ApplicationRepository:
         )
         return result.scalar_one() or 0
 
+    async def get_by_program_period_status(
+        self,
+        program_id: uuid.UUID,
+        period_id: uuid.UUID,
+        app_status: AppStatus,
+    ) -> List[Application]:
+        result = await self.db.execute(
+            select(Application)
+            .options(selectinload(Application.academic_record))
+            .where(
+                Application.program_id == program_id,
+                Application.period_id == period_id,
+                Application.status == app_status,
+            )
+        )
+        return list(result.scalars().all())
+
     async def save(self, application: Application) -> None:
         self.db.add(application)
         await self.db.flush()
