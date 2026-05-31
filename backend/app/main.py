@@ -9,6 +9,7 @@ from app.api.applications import router as applications_router
 from app.api.documents import router as documents_router
 from app.api.events import router as events_router
 from app.api.programs import router as programs_router
+from app.api.ranking import router as ranking_router
 from app.core.redis import close_redis
 
 
@@ -38,3 +39,4 @@ app.include_router(applications_router, prefix="/api/applications", tags=["appli
 app.include_router(documents_router, prefix="/api/documents", tags=["documents"])
 app.include_router(events_router, prefix="/api/applications", tags=["events"])
 app.include_router(programs_router, prefix="/api", tags=["programs"])
+app.include_router(ranking_router, prefix="/api/ygk/rankings", tags=["ygk-ranking"])
