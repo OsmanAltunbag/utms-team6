@@ -1,0 +1,211 @@
+"""
+SPEC-012: Prepare Course Equivalence Table (Intibak)
+"""
+import uuid
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi import HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.domain.audit import AuditLog
+from app.domain.enums import AppStatus, IntibakStatus, RankStatus
+from app.domain.intibak import CourseMapping, IntibakTable
+from app.repositories.application_repository import ApplicationRepository
+
+
+class IntibakService:
+    def __init__(self, db: AsyncSession) -> None:
+        self.db = db
+        self._app_repo = ApplicationRepository(db)
+
+    async def create_table(
+        self,
+        application_id: uuid.UUID,
+        preparer_id: uuid.UUID,
+    ) -> IntibakTable:
+        app = await self._app_repo.get_by_id(application_id)
+        if app is None:
+            raise HTTPException(status_code=404, detail="Application not found")
+
+        if app.academic_record is None or not app.documents:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Missing transcript data — cannot create intibak table",
+            )
+
+        if app.status != AppStatus.RANKING:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Application must be on approved ranking list (status=RANKING)",
+            )
+
+        from sqlalchemy import select as sa_select
+        from app.domain.ranking import Ranking, RankingEntry
+
+        entry_result = await self.db.execute(
+            sa_select(RankingEntry)
+            .join(Ranking)
+            .where(
+                RankingEntry.application_id == application_id,
+                RankingEntry.is_primary == True,
+                Ranking.status == RankStatus.APPROVED,
+            )
+        )
+        entry = entry_result.scalar_one_or_none()
+        if entry is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Application is not on an approved primary ranking list",
+            )
+
+        if app.intibak_table is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Intibak table already exists for this application",
+            )
+
+        table = IntibakTable(
+            application_id=application_id,
+            prepared_by=preparer_id,
+            status=IntibakStatus.DRAFT,
+        )
+        self.db.add(table)
+        await self.db.flush()
+        return table
+
+    async def get_table(self, table_id: uuid.UUID) -> IntibakTable:
+        result = await self.db.execute(
+            select(IntibakTable)
+            .options(selectinload(IntibakTable.course_mappings))
+            .where(IntibakTable.id == table_id)
+        )
+        table = result.scalar_one_or_none()
+        if table is None:
+            raise HTTPException(status_code=404, detail="Intibak table not found")
+        return table
+
+    async def suggest_matches(
+        self,
+        course_name: str,
+        program_id: uuid.UUID,
+    ) -> list[dict]:
+        keywords = course_name.lower().split()
+        suggestions = []
+
+        from app.domain.intibak import CourseMapping
+        result = await self.db.execute(
+            select(CourseMapping.target_course, CourseMapping.target_credits)
+            .join(IntibakTable)
+            .join(IntibakTable.application)
+            .distinct()
+        )
+        past_mappings = result.all()
+
+        for target_course, credits in past_mappings:
+            target_lower = target_course.lower()
+            match_score = sum(1 for kw in keywords if kw in target_lower)
+            if match_score > 0:
+                suggestions.append({
+                    "target_course": target_course,
+                    "target_credits": float(credits) if credits else None,
+                    "match_score": match_score,
+                })
+
+        suggestions.sort(key=lambda x: -x["match_score"])
+        return suggestions[:10]
+
+    async def add_mapping(
+        self,
+        table_id: uuid.UUID,
+        source_course: str,
+        source_credits: Optional[float],
+        target_course: str,
+        target_credits: Optional[float],
+        equivalence_type: str,
+        notes: Optional[str],
+    ) -> CourseMapping:
+        table = await self.get_table(table_id)
+        if not table.is_editable:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot edit submitted intibak table",
+            )
+        if equivalence_type not in ("FULL", "PARTIAL", "NONE"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="equivalence_type must be FULL, PARTIAL, or NONE",
+            )
+
+        from decimal import Decimal
+        mapping = CourseMapping(
+            intibak_table_id=table_id,
+            source_course=source_course,
+            source_credits=Decimal(str(source_credits)) if source_credits else None,
+            target_course=target_course,
+            target_credits=Decimal(str(target_credits)) if target_credits else None,
+            equivalence_type=equivalence_type,
+            notes=notes,
+        )
+        self.db.add(mapping)
+        await self.db.flush()
+        return mapping
+
+    async def update_mapping(
+        self,
+        table_id: uuid.UUID,
+        mapping_id: uuid.UUID,
+        updates: dict,
+    ) -> CourseMapping:
+        table = await self.get_table(table_id)
+        if not table.is_editable:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot edit submitted intibak table",
+            )
+
+        mapping = await self.db.get(CourseMapping, mapping_id)
+        if mapping is None or mapping.intibak_table_id != table_id:
+            raise HTTPException(status_code=404, detail="Mapping not found")
+
+        for field, value in updates.items():
+            if hasattr(mapping, field):
+                setattr(mapping, field, value)
+        await self.db.flush()
+        return mapping
+
+    async def save_draft(self, table_id: uuid.UUID) -> IntibakTable:
+        table = await self.get_table(table_id)
+        await self.db.flush()
+        return table
+
+    async def submit_table(
+        self,
+        table_id: uuid.UUID,
+        submitter_id: uuid.UUID,
+    ) -> IntibakTable:
+        table = await self.get_table(table_id)
+        if not table.is_editable:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Intibak table already submitted",
+            )
+
+        table.status = IntibakStatus.SUBMITTED
+        table.submitted_at = datetime.now(timezone.utc)
+        await self.db.flush()
+
+        log = AuditLog(
+            actor_id=submitter_id,
+            action="INTIBAK_SUBMITTED",
+            entity_type="IntibakTable",
+            entity_id=table_id,
+            old_value={"status": IntibakStatus.DRAFT.value},
+            new_value={"status": IntibakStatus.SUBMITTED.value},
+        )
+        self.db.add(log)
+        await self.db.flush()
+
+        return table
