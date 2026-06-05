@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.storage import MinIOClient
 from app.domain.audit import AuditLog
 from app.domain.enums import AppStatus, IntibakStatus, RankStatus
 from app.domain.intibak import CourseMapping, IntibakTable
@@ -95,7 +96,6 @@ class IntibakService:
         keywords = course_name.lower().split()
         suggestions = []
 
-        from app.domain.intibak import CourseMapping
         result = await self.db.execute(
             select(CourseMapping.target_course, CourseMapping.target_credits)
             .join(IntibakTable)
@@ -170,9 +170,9 @@ class IntibakService:
         if mapping is None or mapping.intibak_table_id != table_id:
             raise HTTPException(status_code=404, detail="Mapping not found")
 
-        for field, value in updates.items():
-            if hasattr(mapping, field):
-                setattr(mapping, field, value)
+        for field_name, value in updates.items():
+            if hasattr(mapping, field_name):
+                setattr(mapping, field_name, value)
         await self.db.flush()
         return mapping
 
@@ -209,3 +209,134 @@ class IntibakService:
         await self.db.flush()
 
         return table
+
+    # ------------------------------------------------------------------
+    # NEW: Transcript parsing
+    # ------------------------------------------------------------------
+
+    async def parse_transcript_for_table(
+        self,
+        table_id: uuid.UUID,
+        requester_id: uuid.UUID,
+        storage: Optional[MinIOClient] = None,
+    ) -> dict:
+        """
+        Fetch the transcript PDF for the application linked to the given intibak
+        table, parse it, and persist the result in Document.extracted_data.
+
+        On subsequent calls the cached result is returned immediately if the
+        transfer commission has already confirmed the extraction
+        (extraction_confirmed=True).
+
+        Returns::
+
+            {
+                "document_id": "...",
+                "parser_strategy": "table" | "line_regex" | "heuristic",
+                "warnings": [...],
+                "courses": [
+                    {
+                        "course_code": "MAT101",
+                        "course_name": "Calculus I",
+                        "credits": 4.0,
+                        "grade": "AA",
+                        "semester": "2022-2023 Fall"
+                    },
+                    ...
+                ]
+            }
+        """
+        # 1. Resolve: intibak table -> application -> transcript document
+        table = await self.get_table(table_id)
+
+        from app.repositories.document_repository import DocumentRepository
+        doc_repo = DocumentRepository(self.db)
+
+        transcript_doc = await doc_repo.get_transcript_for_application(
+            table.application_id
+        )
+        if transcript_doc is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No accepted transcript document found for this application.",
+            )
+
+        # 2. Return cached result if already confirmed by the commission
+        if transcript_doc.extraction_confirmed and transcript_doc.extracted_data:
+            return {
+                "document_id": str(transcript_doc.id),
+                "parser_strategy": transcript_doc.extracted_data.get(
+                    "parser_strategy", "cached"
+                ),
+                "warnings": transcript_doc.extracted_data.get("warnings", []),
+                "courses": transcript_doc.extracted_data.get("courses", []),
+            }
+
+        # 3. Download PDF binary from MinIO
+        _storage = storage or MinIOClient()
+        try:
+            response = _storage.get_object(transcript_doc.file_path)
+            pdf_bytes: bytes = response.read()
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Could not retrieve transcript file: {exc}",
+            )
+
+        # 4. Run the parser
+        from app.services.transcript_parser import parse_transcript
+
+        parse_result = parse_transcript(pdf_bytes)
+
+        if not parse_result.courses:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "No course data could be extracted from the transcript. "
+                    "Please ensure the PDF contains selectable text (not a scanned image)."
+                ),
+            )
+
+        # 5. Serialize to JSONB-compatible dict
+        extracted: dict = {
+            "parser_strategy": parse_result.parser_strategy,
+            "warnings": parse_result.warnings,
+            "courses": [
+                {
+                    "course_code": c.course_code,
+                    "course_name": c.course_name,
+                    "credits": c.credits,
+                    "grade": c.grade,
+                    "semester": c.semester,
+                }
+                for c in parse_result.courses
+            ],
+        }
+
+        # 6. Persist in Document.extracted_data
+        #    extraction_confirmed stays False until the commission reviews and confirms
+        transcript_doc.extracted_data = extracted
+        transcript_doc.extraction_confirmed = False
+        await self.db.flush()
+
+        # 7. Write audit log
+        log = AuditLog(
+            actor_id=requester_id,
+            action="TRANSCRIPT_PARSED",
+            entity_type="Document",
+            entity_id=transcript_doc.id,
+            old_value=None,
+            new_value={
+                "course_count": len(parse_result.courses),
+                "strategy": parse_result.parser_strategy,
+            },
+        )
+        self.db.add(log)
+        await self.db.flush()
+
+        return {
+            "document_id": str(transcript_doc.id),
+            "parser_strategy": parse_result.parser_strategy,
+            "warnings": parse_result.warnings,
+            "courses": extracted["courses"],
+        }

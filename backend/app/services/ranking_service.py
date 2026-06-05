@@ -155,8 +155,6 @@ class RankingService:
         ranking_id: uuid.UUID,
         approver_id: uuid.UUID,
     ) -> Ranking:
-        from sqlalchemy import text as sa_text
-
         result = await self.db.execute(
             select(Ranking)
             .options(selectinload(Ranking.entries))
