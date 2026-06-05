@@ -74,8 +74,9 @@ class PeriodService:
         if period is None:
             return False
         now = datetime.now(timezone.utc)
-        return period.is_active and period.opens_at <= now <= period.closes_at
-
+        opens = period.opens_at.replace(tzinfo=timezone.utc) if period.opens_at.tzinfo is None else period.opens_at
+        closes = period.closes_at.replace(tzinfo=timezone.utc) if period.closes_at.tzinfo is None else period.closes_at
+        return period.is_active and opens <= now <= closes
     async def update_period(
         self,
         period_id: uuid.UUID,

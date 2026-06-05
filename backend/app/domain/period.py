@@ -46,4 +46,6 @@ class ApplicationPeriod(Base):
     def is_open(self) -> bool:
         from datetime import timezone
         now = datetime.now(timezone.utc)
-        return self.is_active and self.opens_at <= now <= self.closes_at
+        opens = self.opens_at.replace(tzinfo=timezone.utc) if self.opens_at.tzinfo is None else self.opens_at
+        closes = self.closes_at.replace(tzinfo=timezone.utc) if self.closes_at.tzinfo is None else self.closes_at
+        return self.is_active and opens <= now <= closes
