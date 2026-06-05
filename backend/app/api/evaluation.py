@@ -27,6 +27,9 @@ class ScoreCorrectionRequest(BaseModel):
 
 class EvaluateConditionsRequest(BaseModel):
     notes: Optional[str] = None
+    rejection_override: bool = False
+    portfolio_result: Optional[str] = None        # "Passed" | "Failed" | None
+    rejection_justification: Optional[str] = None # explicit rejection reason text
 
 
 class ManualCourseMappingRequest(BaseModel):
@@ -181,7 +184,12 @@ async def evaluate_conditions(
     from app.services.eligibility_engine import EligibilityEngine
     engine = EligibilityEngine(db)
     result = await engine.evaluate_department_conditions(
-        application_id, current_user.id, body.notes
+        application_id,
+        current_user.id,
+        notes=body.notes,
+        rejection_override=body.rejection_override,
+        portfolio_result=body.portfolio_result,
+        rejection_justification=body.rejection_justification,
     )
     return result
 

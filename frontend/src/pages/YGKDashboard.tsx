@@ -3,6 +3,7 @@ import toast from 'react-hot-toast'
 import {
   Home, ClipboardList, ArrowLeft, Eye, CheckCircle, XCircle,
   Edit2, AlertTriangle, Lock, FileText, Activity, ShieldCheck,
+  BookOpen, AlertCircle, RefreshCw, Link2,
 } from 'lucide-react'
 import { Sidebar } from '../components/Sidebar'
 import { StatusBadge } from '../components/StatusBadge'
@@ -16,11 +17,15 @@ import {
   verifyScores,
   rejectApplication,
   correctScore,
+  getDeptConditions,
+  evaluateConditions,
+  manualCourseMapping,
 } from '../api/ygk'
 import type {
   YGKApplicationSummary,
   YGKEvaluationDetail,
   CorrectionField,
+  DeptConditionsResponse,
 } from '../types/ygk'
 
 // ---------------------------------------------------------------------------
@@ -274,6 +279,418 @@ function ScoreCorrectionPanel({
         Apply Correction
       </button>
     </form>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// UC-04-02 / SPEC-009 helpers
+// ---------------------------------------------------------------------------
+
+type ConditionResultType = 'Met' | 'Not Met' | 'Pending' | 'Unmatched'
+
+function ConditionResultBadge({ result }: { result: ConditionResultType }) {
+  const styleMap: Record<ConditionResultType, string> = {
+    'Met': 'bg-green-100 text-green-700',
+    'Not Met': 'bg-red-100 text-red-700',
+    'Pending': 'bg-yellow-100 text-yellow-700',
+    'Unmatched': 'bg-gray-100 text-gray-500',
+  }
+  return (
+    <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ${styleMap[result] ?? styleMap['Pending']}`}>
+      {result}
+    </span>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Department Specific Requirements (UC-04-02)
+// ---------------------------------------------------------------------------
+
+function DeptConditionsSection({
+  applicationId,
+  currentStatus,
+  onEvaluated,
+}: {
+  applicationId: string
+  currentStatus: string
+  onEvaluated: (newStatus: string) => void
+}) {
+  const [conditions, setConditions] = useState<DeptConditionsResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  const [manualOverride, setManualOverride] = useState(false)
+  const [overrideNote, setOverrideNote] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [courseMappings, setCourseMappings] = useState<Record<string, string>>({})
+  const [mappingInProgress, setMappingInProgress] = useState<Record<string, boolean>>({})
+  const [portfolioResult, setPortfolioResult] = useState<'Passed' | 'Failed' | ''>('')
+  const [rejectionNote, setRejectionNote] = useState('')
+
+  const isReadOnly = currentStatus !== 'UNDER_REVIEW'
+
+  async function reload() {
+    try {
+      const data = await getDeptConditions(applicationId)
+      setConditions(data)
+      setLoadError(false)
+    } catch {
+      setLoadError(true)
+    }
+  }
+
+  useEffect(() => {
+    getDeptConditions(applicationId)
+      .then(data => { setConditions(data); setLoadError(false) })
+      .catch(() => setLoadError(true))
+      .finally(() => setLoading(false))
+  }, [applicationId])
+
+  async function handleManualMapping(ruleKey: string) {
+    const course = courseMappings[ruleKey]?.trim()
+    if (!course) { toast.error('Enter the transcript course name.'); return }
+    setMappingInProgress(prev => ({ ...prev, [ruleKey]: true }))
+    try {
+      await manualCourseMapping(applicationId, course, ruleKey)
+      toast.success('Course mapped successfully.')
+      setCourseMappings(prev => ({ ...prev, [ruleKey]: '' }))
+      await reload()
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setMappingInProgress(prev => ({ ...prev, [ruleKey]: false }))
+    }
+  }
+
+  const anyNotMet =
+    (conditions?.requirements.some(r => r.result === 'Not Met') ?? false) ||
+    portfolioResult === 'Failed'
+
+  async function handleConfirmAll() {
+    setSubmitting(true)
+    try {
+      const result = await evaluateConditions(applicationId, {
+        rejectionOverride: anyNotMet,
+        portfolioResult: portfolioResult || undefined,
+        rejectionJustification: anyNotMet ? rejectionNote.trim() : undefined,
+      })
+      const newStatus = result.evaluation.passed ? 'ENGLISH_REVIEW' : 'REJECTED'
+      toast.success(
+        result.evaluation.passed
+          ? 'All conditions met — application advanced to English Review.'
+          : 'Application rejected — one or more conditions not met.',
+      )
+      onEvaluated(newStatus)
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleManualOverrideSubmit() {
+    if (!overrideNote.trim()) { toast.error('Please enter an evaluation note.'); return }
+    setSubmitting(true)
+    try {
+      const result = await evaluateConditions(applicationId, { notes: overrideNote.trim() })
+      const newStatus = result.evaluation.passed ? 'ENGLISH_REVIEW' : 'REJECTED'
+      toast.success('Manual override evaluation submitted.')
+      onEvaluated(newStatus)
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const sectionHeader = (
+    <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center gap-2">
+        <BookOpen className="w-5 h-5 text-indigo-600" />
+        <h2 className="text-base font-semibold text-gray-900">Department Specific Requirements</h2>
+      </div>
+      {isReadOnly && (
+        <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+          Read Only
+        </span>
+      )}
+    </div>
+  )
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-lg shadow-sm p-6">
+        {sectionHeader}
+        <div className="flex justify-center py-8"><Spinner /></div>
+      </div>
+    )
+  }
+
+  // TC-2B: Configuration Load Error banner
+  if (loadError && !manualOverride) {
+    return (
+      <div className="bg-white rounded-lg shadow-sm p-6">
+        {sectionHeader}
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-red-800">Configuration Load Error</p>
+            <p className="text-xs text-red-700 mt-0.5">
+              Unable to load department condition rules. The configuration may be missing or the
+              service is temporarily unavailable.
+            </p>
+          </div>
+          {!isReadOnly && (
+            <button
+              onClick={() => setManualOverride(true)}
+              className="flex-shrink-0 px-3 py-1.5 text-xs bg-white border border-red-300 text-red-700 rounded-lg hover:bg-red-50 transition-colors"
+            >
+              Manual Override
+            </button>
+          )}
+        </div>
+        <button
+          onClick={reload}
+          className="mt-3 flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-800"
+        >
+          <RefreshCw className="w-3 h-3" />
+          Retry
+        </button>
+      </div>
+    )
+  }
+
+  // TC-2B: Manual Override mode
+  if (manualOverride) {
+    return (
+      <div className="bg-white rounded-lg shadow-sm p-6">
+        {sectionHeader}
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-amber-800">Manual Override Active</p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              Condition rules could not be loaded. You may proceed with a manual evaluation note.
+              Automated checks will still run on the backend where data is available.
+            </p>
+          </div>
+        </div>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Evaluation Note<span className="text-red-500 ml-0.5">*</span>
+            </label>
+            <textarea
+              value={overrideNote}
+              onChange={e => setOverrideNote(e.target.value)}
+              rows={3}
+              placeholder="Describe your manual evaluation findings…"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+            />
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleManualOverrideSubmit}
+              disabled={submitting || !overrideNote.trim()}
+              className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            >
+              {submitting ? <Spinner /> : <CheckCircle className="w-4 h-4" />}
+              Submit Manual Evaluation
+            </button>
+            <button
+              onClick={() => setManualOverride(false)}
+              className="text-xs text-gray-500 hover:text-gray-700"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const requirements = conditions?.requirements ?? []
+  const portfolioReq = requirements.find(r => r.rule_key === 'PORTFOLIO_REQUIRED')
+  const otherReqs = requirements.filter(r => r.rule_key !== 'PORTFOLIO_REQUIRED')
+
+  return (
+    <div className="bg-white rounded-lg shadow-sm p-6">
+      {sectionHeader}
+
+      {requirements.length === 0 ? (
+        <p className="text-gray-400 text-sm">
+          No department conditions configured for this program.
+        </p>
+      ) : (
+        <>
+          <div className="divide-y divide-gray-100 mb-6">
+            {/* TC-1A / TC-1B: Automated course checks + manual mapping */}
+            {otherReqs.map(req => {
+              const badgeResult: ConditionResultType =
+                req.result === 'Pending' && req.rule_key === 'CORE_COURSE_GRADE'
+                  ? 'Unmatched'
+                  : (req.result as ConditionResultType)
+              const showMapping =
+                !isReadOnly &&
+                (req.result === 'Pending' || badgeResult === 'Unmatched')
+
+              return (
+                <div key={req.rule_key} className="py-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900">
+                        {req.description ?? req.rule_key}
+                      </p>
+                      {req.required_value && (
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          Minimum / Required: {req.required_value}
+                        </p>
+                      )}
+                      {req.detail && (
+                        <p className="text-xs text-gray-500 mt-0.5 italic">{req.detail}</p>
+                      )}
+                    </div>
+                    <ConditionResultBadge result={badgeResult} />
+                  </div>
+
+                  {/* TC-1B: Manual Course Matching */}
+                  {showMapping && (
+                    <div className="mt-3 flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={courseMappings[req.rule_key] ?? ''}
+                        onChange={e =>
+                          setCourseMappings(prev => ({ ...prev, [req.rule_key]: e.target.value }))
+                        }
+                        placeholder="Enter transcript course name…"
+                        className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <button
+                        onClick={() => handleManualMapping(req.rule_key)}
+                        disabled={
+                          mappingInProgress[req.rule_key] ||
+                          !courseMappings[req.rule_key]?.trim()
+                        }
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors whitespace-nowrap"
+                      >
+                        {mappingInProgress[req.rule_key] ? (
+                          <Spinner />
+                        ) : (
+                          <Link2 className="w-3 h-3" />
+                        )}
+                        Map Course
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+
+            {/* TC-1A: Portfolio Review row */}
+            {portfolioReq && (
+              <div className="py-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900">Portfolio Review</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {portfolioReq.description ?? 'Portfolio document required for evaluation'}
+                    </p>
+                    {portfolioReq.detail && (
+                      <p className="text-xs text-gray-500 mt-0.5 italic">{portfolioReq.detail}</p>
+                    )}
+                  </div>
+                  <ConditionResultBadge result={portfolioReq.result as ConditionResultType} />
+                </div>
+
+                {!isReadOnly && (
+                  <div className="mt-3 flex items-center gap-3 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500">Result:</span>
+                      {(['Passed', 'Failed'] as const).map(option => (
+                        <button
+                          key={option}
+                          onClick={() =>
+                            setPortfolioResult(prev => (prev === option ? '' : option))
+                          }
+                          className={`px-3 py-1 text-xs rounded-lg border transition-colors ${
+                            portfolioResult === option
+                              ? option === 'Passed'
+                                ? 'bg-green-600 text-white border-green-600'
+                                : 'bg-red-600 text-white border-red-600'
+                              : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                          }`}
+                        >
+                          {option}
+                        </button>
+                      ))}
+                    </div>
+                    {/* TC-2A: File Error / Request Re-upload */}
+                    <button
+                      onClick={() =>
+                        toast.success('Re-upload request sent to applicant.')
+                      }
+                      className="flex items-center gap-1.5 px-3 py-1 text-xs text-orange-600 border border-orange-200 rounded-lg hover:bg-orange-50 transition-colors"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      File Error / Request Re-upload
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* TC-1C: Rejection justification */}
+          {anyNotMet && !isReadOnly && (
+            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <XCircle className="w-4 h-4 text-red-600" />
+                <p className="text-sm font-semibold text-red-800">
+                  One or more conditions not met — rejection justification required
+                </p>
+              </div>
+              <textarea
+                value={rejectionNote}
+                onChange={e => setRejectionNote(e.target.value)}
+                rows={3}
+                placeholder="Provide a detailed justification for rejection…"
+                className="w-full border border-red-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 resize-none bg-white"
+              />
+            </div>
+          )}
+
+          {/* Confirm All Conditions button */}
+          {!isReadOnly && (
+            <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
+              <button
+                onClick={handleConfirmAll}
+                disabled={submitting || (anyNotMet && !rejectionNote.trim())}
+                className={`flex items-center gap-2 px-5 py-2.5 text-white text-sm font-semibold rounded-lg disabled:opacity-50 transition-colors shadow-sm ${
+                  anyNotMet ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'
+                }`}
+              >
+                {submitting ? (
+                  <Spinner />
+                ) : anyNotMet ? (
+                  <XCircle className="w-4 h-4" />
+                ) : (
+                  <CheckCircle className="w-4 h-4" />
+                )}
+                {submitting
+                  ? 'Submitting…'
+                  : anyNotMet
+                  ? 'Confirm & Reject Application'
+                  : 'Confirm All Conditions'}
+              </button>
+              {anyNotMet && !rejectionNote.trim() && (
+                <p className="text-xs text-red-500">
+                  Rejection justification required before submitting.
+                </p>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
   )
 }
 
@@ -592,6 +1009,16 @@ function EvaluationDetail({
           )
         )}
       </div>
+
+      {/* Department Specific Requirements (UC-04-02) */}
+      <DeptConditionsSection
+        applicationId={applicationId}
+        currentStatus={detail.status}
+        onEvaluated={(newStatus) => {
+          setDetail(prev => prev ? { ...prev, status: newStatus } : prev)
+          loadDetail()
+        }}
+      />
 
       {/* Audit / Activity Log */}
       <div className="bg-white rounded-lg shadow-sm p-6">

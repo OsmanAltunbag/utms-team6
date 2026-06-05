@@ -60,6 +60,9 @@ class EligibilityEngine:
         application_id: uuid.UUID,
         evaluator_id: uuid.UUID,
         notes: Optional[str] = None,
+        rejection_override: bool = False,
+        portfolio_result: Optional[str] = None,
+        rejection_justification: Optional[str] = None,
     ) -> dict:
         app = await self._app_repo.get_by_id(application_id)
         if app is None:
@@ -79,13 +82,31 @@ class EligibilityEngine:
         requirements = list(reqs_result.scalars().all())
 
         record = app.academic_record
+
+        # Index existing manual course mappings so they are honoured here.
+        existing_manual = {
+            c.rule_key: c
+            for c in app.eligibility_checks
+            if c.detail and c.detail.startswith("Manual course mapping:")
+        }
+
         checks = []
-        all_passed = True
+        automated_passed = True
 
         for req in requirements:
-            passed, detail = self._evaluate_rule(req, record, app)
+            if req.rule_key == "PORTFOLIO_REQUIRED" and portfolio_result is not None:
+                # Evaluator provided an explicit portfolio decision — use it.
+                passed = portfolio_result == "Passed"
+                detail = f"Portfolio manually reviewed by YGK: {portfolio_result}"
+            elif req.rule_key in existing_manual:
+                # A previous manual-course-mapping call already resolved this rule.
+                passed = existing_manual[req.rule_key].passed
+                detail = existing_manual[req.rule_key].detail
+            else:
+                passed, detail = self._evaluate_rule(req, record, app)
+
             if not passed:
-                all_passed = False
+                automated_passed = False
 
             check = EligibilityCheck(
                 application_id=application_id,
@@ -98,11 +119,26 @@ class EligibilityEngine:
 
         await self.db.flush()
 
+        # ── Final outcome decision ──────────────────────────────────────
+        # The YGK evaluator is the authoritative decision-maker.
+        # Rejection requires an explicit signal:
+        #   • rejection_override=True  (UI detected any "Not Met" condition)
+        #   • portfolio_result == "Failed"  (evaluator failed portfolio review)
+        #   • rejection_justification has actual text  (evaluator wrote a reason)
+        # Anything else is an approval — automated checks are informational only
+        # (CORE_COURSE rules always fail automated eval and require human review).
+        evaluator_rejects = (
+            rejection_override
+            or portfolio_result == "Failed"
+            or bool(rejection_justification and rejection_justification.strip())
+        )
+        all_passed = not evaluator_rejects
+
         evaluation = DepartmentEvaluation(
             application_id=application_id,
             evaluator_id=evaluator_id,
             passed=all_passed,
-            notes=notes,
+            notes=rejection_justification or notes,
             evaluated_at=datetime.now(timezone.utc),
         )
         self.db.add(evaluation)
@@ -114,7 +150,13 @@ class EligibilityEngine:
             entity_type="Application",
             entity_id=application_id,
             old_value={"status": app.status.value},
-            new_value={"passed": all_passed, "checks": len(checks)},
+            new_value={
+                "passed": all_passed,
+                "portfolio_result": portfolio_result,
+                "rejection_justification": rejection_justification,
+                "rejection_override": rejection_override,
+                "checks": len(checks),
+            },
         )
         self.db.add(log)
         await self.db.flush()
@@ -122,12 +164,17 @@ class EligibilityEngine:
         if all_passed:
             await self._app_svc.change_status(
                 application_id, AppStatus.ENGLISH_REVIEW, evaluator_id,
-                "Department conditions passed"
+                "Department conditions confirmed by YGK",
             )
         else:
+            rejection_note = (
+                rejection_justification.strip()
+                if rejection_justification and rejection_justification.strip()
+                else (notes or "Department conditions not met")
+            )
             await self._app_svc.change_status(
                 application_id, AppStatus.REJECTED, evaluator_id,
-                "Department conditions failed"
+                rejection_note,
             )
 
         return {

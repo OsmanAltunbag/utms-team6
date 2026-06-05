@@ -4,6 +4,9 @@ import type {
   YGKEvaluationDetail,
   ScoreVerifyResult,
   CorrectionField,
+  DeptConditionsResponse,
+  EvaluateConditionsResult,
+  ManualCourseMappingResult,
 } from '../types/ygk'
 
 const client = axios.create({
@@ -70,5 +73,43 @@ export async function correctScore(
     corrected_value,
     correction_note,
   })
+  return data
+}
+
+export async function getDeptConditions(applicationId: string): Promise<DeptConditionsResponse> {
+  const { data } = await client.get<DeptConditionsResponse>(`/applications/${applicationId}/dept-conditions`)
+  return data
+}
+
+export async function evaluateConditions(
+  applicationId: string,
+  opts: {
+    notes?: string
+    rejectionOverride?: boolean
+    portfolioResult?: string
+    rejectionJustification?: string
+  } = {},
+): Promise<EvaluateConditionsResult> {
+  const { data } = await client.post<EvaluateConditionsResult>(
+    `/applications/${applicationId}/evaluate-conditions`,
+    {
+      notes: opts.notes ?? null,
+      rejection_override: opts.rejectionOverride ?? false,
+      portfolio_result: opts.portfolioResult ?? null,
+      rejection_justification: opts.rejectionJustification ?? null,
+    },
+  )
+  return data
+}
+
+export async function manualCourseMapping(
+  applicationId: string,
+  external_course: string,
+  rule_key: string,
+): Promise<ManualCourseMappingResult> {
+  const { data } = await client.post<ManualCourseMappingResult>(
+    `/applications/${applicationId}/manual-course-mapping`,
+    { external_course, rule_key },
+  )
   return data
 }

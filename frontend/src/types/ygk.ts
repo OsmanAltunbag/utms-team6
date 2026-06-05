@@ -38,3 +38,31 @@ export interface ScoreVerifyResult {
 }
 
 export type CorrectionField = 'yks_score' | 'gpa_4'
+
+export interface DeptConditionRequirement {
+  rule_key: string
+  required_value: string | null
+  description: string | null
+  result: 'Met' | 'Not Met' | 'Pending'
+  detail: string | null
+}
+
+export interface DeptConditionsResponse {
+  requirements: DeptConditionRequirement[]
+}
+
+export interface EvaluateConditionsResult {
+  evaluation: {
+    passed: boolean
+    notes: string | null
+    evaluated_at: string
+  }
+  checks: Array<{ rule_key: string; passed: boolean; detail: string | null }>
+}
+
+export interface ManualCourseMappingResult {
+  id: string
+  rule_key: string
+  passed: boolean
+  detail: string | null
+}
