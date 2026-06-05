@@ -39,7 +39,10 @@ async def stream_status_events(
         try:
             heartbeat = 0
             while True:
-                msg = await pubsub.get_message(ignore_subscribe_messages=True)
+                try:
+                    msg = await pubsub.get_message(ignore_subscribe_messages=True)
+                except asyncio.CancelledError:
+                    break
                 if msg and msg.get("type") == "message":
                     yield f"data: {msg['data']}\n\n"
                     heartbeat = 0
@@ -47,7 +50,10 @@ async def stream_status_events(
                 if heartbeat >= 15:
                     yield ": ping\n\n"
                     heartbeat = 0
-                await asyncio.sleep(1)
+                try:
+                    await asyncio.sleep(1)
+                except asyncio.CancelledError:
+                    break
         finally:
             await pubsub.unsubscribe(f"app_status:{application_id}")
             await pubsub.aclose()

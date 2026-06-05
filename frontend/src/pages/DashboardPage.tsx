@@ -37,6 +37,7 @@ import {
 import { getResults, publishResults } from '../api/staff'
 import type { ResultsResponse, ApplicantResult } from '../types/staff'
 import { useAuth } from '../context/AuthContext'
+import YGKDashboard from './YGKDashboard'
 import { Sidebar } from '../components/Sidebar'
 import { StatusBadge } from '../components/StatusBadge'
 import Spinner from '../components/Spinner'
@@ -2341,7 +2342,7 @@ export default function DashboardPage() {
     case 'STUDENT_AFFAIRS':
       return <StudentAffairsDashboardContent userName={displayName} onLogout={handleLogout} />
     case 'TRANSFER_COMMISSION':
-      return <StaffDashboardContent userName={displayName} roleLabel="Transfer Commission" icon={Users} onLogout={handleLogout} />
+      return <YGKDashboard userName={displayName} onLogout={handleLogout} />
     case 'YDYO':
       return <StaffDashboardContent userName={displayName} roleLabel="Foreign Languages Office" icon={CheckCircle} onLogout={handleLogout} />
     case 'DEAN_OFFICE':

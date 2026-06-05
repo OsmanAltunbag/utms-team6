@@ -1,0 +1,730 @@
+import { useState, useEffect } from 'react'
+import toast from 'react-hot-toast'
+import {
+  Home, ClipboardList, ArrowLeft, Eye, CheckCircle, XCircle,
+  Edit2, AlertTriangle, Lock, FileText, Activity, ShieldCheck,
+} from 'lucide-react'
+import { Sidebar } from '../components/Sidebar'
+import { StatusBadge } from '../components/StatusBadge'
+import Spinner from '../components/Spinner'
+import { extractErrorMessage } from '../api/auth'
+import { getApplicationStatus } from '../api/applications'
+import { getPreviewUrl } from '../api/applications'
+import {
+  listYGKApplications,
+  getEvaluationDetail,
+  verifyScores,
+  rejectApplication,
+  correctScore,
+} from '../api/ygk'
+import type {
+  YGKApplicationSummary,
+  YGKEvaluationDetail,
+  CorrectionField,
+} from '../types/ygk'
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function NavBtn({ active, onClick, icon: Icon, label }: {
+  active: boolean; onClick: () => void; icon: React.ElementType; label: string
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-3 w-full px-4 py-3 rounded-lg text-sm transition-colors ${
+        active ? 'bg-indigo-700 text-white' : 'text-indigo-200 hover:bg-indigo-800 hover:text-white'
+      }`}
+    >
+      <Icon className="w-5 h-5 flex-shrink-0" />
+      {label}
+    </button>
+  )
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  UNDER_REVIEW: 'Under Review',
+  DEPT_EVAL: 'Department Evaluation',
+  ENGLISH_REVIEW: 'English Review',
+  RANKING: 'Ranking',
+  ANNOUNCED: 'Announced',
+  REJECTED: 'Rejected',
+}
+
+function formatSource(source: string | null | undefined): string {
+  if (!source) return '—'
+  if (source === 'MANUAL') return 'YGK Manual Correction'
+  // All automated/declared sources map to a single human-readable label
+  return 'Extracted from YKS Report'
+}
+
+const DOC_TYPE_LABELS: Record<string, string> = {
+  TRANSCRIPT: 'Transcript',
+  YKS_RESULT: 'YKS Score Report',
+  LANGUAGE_CERT: 'Language Certificate',
+  ID_COPY: 'ID Copy',
+  MILITARY_STATUS: 'Military Status',
+  DISCIPLINE_RECORD: 'Discipline Record',
+  OTHER: 'Other',
+}
+
+// ---------------------------------------------------------------------------
+// Application List
+// ---------------------------------------------------------------------------
+
+function ApplicationList({
+  onSelect,
+}: {
+  onSelect: (app: YGKApplicationSummary) => void
+}) {
+  const [apps, setApps] = useState<YGKApplicationSummary[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    listYGKApplications()
+      .then(setApps)
+      .catch(() => toast.error('Failed to load applications.'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-16">
+        <Spinner />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold text-gray-900">Pending Evaluation</h1>
+        <p className="text-gray-500 text-sm mt-1">
+          Applications awaiting score verification by Transfer Commission
+        </p>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+        {apps.length === 0 ? (
+          <div className="text-center py-16">
+            <ClipboardList className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+            <p className="text-gray-500 text-sm">No applications pending evaluation.</p>
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-gray-400 border-b border-gray-100 bg-gray-50">
+                <th className="px-6 py-3 font-medium">Tracking No.</th>
+                <th className="px-6 py-3 font-medium">Applicant</th>
+                <th className="px-6 py-3 font-medium">Program</th>
+                <th className="px-6 py-3 font-medium">Status</th>
+                <th className="px-6 py-3 font-medium">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {apps.map((app) => (
+                <tr
+                  key={app.id}
+                  className="border-b border-gray-50 hover:bg-indigo-50 cursor-pointer transition-colors"
+                  onClick={() => onSelect(app)}
+                >
+                  <td className="px-6 py-4 font-mono text-xs text-gray-600">
+                    {app.tracking_number || '—'}
+                  </td>
+                  <td className="px-6 py-4 font-medium text-gray-900">
+                    {app.applicant || 'Unknown'}
+                  </td>
+                  <td className="px-6 py-4 text-gray-600">
+                    {app.program || '—'}
+                  </td>
+                  <td className="px-6 py-4">
+                    <StatusBadge status={app.status} />
+                  </td>
+                  <td className="px-6 py-4">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onSelect(app) }}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+                    >
+                      <Eye className="w-3 h-3" />
+                      Evaluate
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Score Correction Panel
+// ---------------------------------------------------------------------------
+
+function ScoreCorrectionPanel({
+  applicationId,
+  isLocked,
+  forceForeignScale,
+  onCorrected,
+}: {
+  applicationId: string
+  isLocked: boolean
+  forceForeignScale: boolean
+  onCorrected: () => void
+}) {
+  const [field, setField] = useState<CorrectionField>('gpa_4')
+  const [value, setValue] = useState('')
+  const [note, setNote] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    const parsed = parseFloat(value)
+    if (isNaN(parsed)) {
+      toast.error('Please enter a valid numeric value.')
+      return
+    }
+    if (!note.trim()) {
+      toast.error('Correction note is required.')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await correctScore(applicationId, field, parsed, note.trim())
+      toast.success('Score corrected successfully.')
+      setValue('')
+      setNote('')
+      onCorrected()
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (isLocked) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-gray-400 py-2">
+        <Lock className="w-4 h-4" />
+        Scores are locked — corrections not allowed after verification.
+      </div>
+    )
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      {!forceForeignScale && (
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Field to Correct</label>
+          <select
+            value={field}
+            onChange={e => setField(e.target.value as CorrectionField)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+          >
+            <option value="gpa_4">GPA (4.0 Scale)</option>
+            <option value="yks_score">YKS Score</option>
+          </select>
+        </div>
+      )}
+      {forceForeignScale && (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+          Enter the GPA equivalent on the 4.0 scale. The system will convert to 100-scale using the official YÖK table.
+        </div>
+      )}
+      <div>
+        <label className="block text-xs text-gray-500 mb-1">
+          {forceForeignScale ? 'GPA (4.0 Scale Equivalent)' : field === 'gpa_4' ? 'Corrected GPA (4.0)' : 'Corrected YKS Score'}<span className="text-red-500 ml-0.5">*</span>
+        </label>
+        <input
+          type="number"
+          step="0.01"
+          min="0"
+          max={forceForeignScale || field === 'gpa_4' ? '4' : undefined}
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          placeholder={forceForeignScale || field === 'gpa_4' ? '0.00 – 4.00' : 'e.g. 420.5'}
+          required
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        />
+      </div>
+      <div>
+        <label className="block text-xs text-gray-500 mb-1">
+          Correction Note / Justification<span className="text-red-500 ml-0.5">*</span>
+        </label>
+        <textarea
+          value={note}
+          onChange={e => setNote(e.target.value)}
+          rows={3}
+          required
+          placeholder={forceForeignScale
+            ? 'Describe the grading scale used and how the 4.0 equivalent was calculated…'
+            : 'Reason for correction (e.g. data entry error, document discrepancy)…'}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+        />
+      </div>
+      <button
+        type="submit"
+        disabled={submitting || !value || !note.trim()}
+        className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white text-sm rounded-lg hover:bg-amber-700 disabled:opacity-50 transition-colors"
+      >
+        {submitting ? <Spinner /> : <Edit2 className="w-4 h-4" />}
+        Apply Correction
+      </button>
+    </form>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Evaluation Detail Dashboard
+// ---------------------------------------------------------------------------
+
+function EvaluationDetail({
+  applicationId,
+  applicantName,
+  onBack,
+}: {
+  applicationId: string
+  applicantName: string
+  onBack: () => void
+}) {
+  const [detail, setDetail] = useState<YGKEvaluationDetail | null>(null)
+  const [statusHistory, setStatusHistory] = useState<Array<{
+    status: string; changed_at: string; changed_by_role: string | null; note: string | null
+  }>>([])
+  const [loading, setLoading] = useState(true)
+  const [verifying, setVerifying] = useState(false)
+  const [rejecting, setRejecting] = useState(false)
+  const [showCorrection, setShowCorrection] = useState(false)
+  const [foreignScale, setForeignScale] = useState(false)
+
+  async function loadDetail() {
+    try {
+      const [det, statusData] = await Promise.all([
+        getEvaluationDetail(applicationId),
+        getApplicationStatus(applicationId).catch(() => null),
+      ])
+      setDetail(det)
+      if (statusData) setStatusHistory(statusData.history)
+
+      // Auto-show correction panel if no gpa_4 available (foreign/unknown scale)
+      if (!det.academic_record?.gpa_4) {
+        setForeignScale(true)
+        setShowCorrection(true)
+      }
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadDetail() }, [applicationId])
+
+  async function handleVerify() {
+    if (!detail) return
+    setVerifying(true)
+    try {
+      const result = await verifyScores(applicationId)
+      toast.success('Scores verified and locked successfully.')
+      // Apply the verified state immediately from the response so the badge
+      // updates without waiting for the re-fetch (avoids DB commit race).
+      setDetail(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          status: result.application_status ?? prev.status,
+          academic_record: prev.academic_record
+            ? { ...prev.academic_record, is_locked: true }
+            : prev.academic_record,
+        }
+      })
+      await loadDetail()
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setVerifying(false)
+    }
+  }
+
+  async function handleReject() {
+    if (!detail || !window.confirm('Reject this application? This action cannot be undone.')) return
+    setRejecting(true)
+    try {
+      const result = await rejectApplication(applicationId)
+      toast.success('Application rejected.')
+      setDetail(prev => prev ? { ...prev, status: result.application_status } : prev)
+      await loadDetail()
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setRejecting(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-20">
+        <Spinner />
+      </div>
+    )
+  }
+
+  if (!detail) return null
+
+  const record = detail.academic_record
+  const isLocked = record?.is_locked ?? false
+  const isManualSource = record?.source === 'MANUAL'
+  const needsManualCalc = !record?.gpa_4 && !isLocked
+  const canVerify = !isLocked && (record?.gpa_4 != null || record?.yks_score != null)
+
+  const transcriptDocs = detail.documents.filter(d =>
+    ['TRANSCRIPT', 'YKS_RESULT'].includes(d.doc_type),
+  )
+  const otherDocs = detail.documents.filter(d =>
+    !['TRANSCRIPT', 'YKS_RESULT'].includes(d.doc_type),
+  )
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-start gap-4">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 transition-colors mt-0.5"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to list
+        </button>
+        <div className="flex-1">
+          <h1 className="text-2xl font-semibold text-gray-900">{applicantName}</h1>
+          <div className="flex items-center gap-3 mt-1">
+            <StatusBadge status={detail.status} />
+            <span className="text-gray-400 text-xs">{STATUS_LABELS[detail.status] ?? detail.status}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* TC-2A: Foreign / Unknown Scale Warning */}
+      {needsManualCalc && (
+        <div className="bg-amber-50 border border-amber-300 rounded-lg p-4 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-amber-800">Manual Calculation Required</p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              No 4.0-scale GPA was found for this applicant. This may indicate a foreign or
+              non-standard grading scale. A YGK member must manually enter the GPA equivalent
+              and provide a justification before scores can be verified.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Scores already locked */}
+      {isLocked && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3">
+          <Lock className="w-5 h-5 text-green-600 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-green-800">Scores Verified & Locked</p>
+            <p className="text-xs text-green-700 mt-0.5">
+              Academic scores have been confirmed and locked. No further corrections are possible.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Documents */}
+      <div className="bg-white rounded-lg shadow-sm p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <FileText className="w-5 h-5 text-indigo-600" />
+          <h2 className="text-base font-semibold text-gray-900">Uploaded Documents</h2>
+        </div>
+
+        {detail.documents.length === 0 ? (
+          <p className="text-gray-400 text-sm">No documents uploaded.</p>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {[...transcriptDocs, ...otherDocs].map((doc) => (
+              <div key={doc.id} className="py-3 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`w-2 h-2 rounded-full ${
+                    doc.status === 'VERIFIED' ? 'bg-green-500' :
+                    doc.status === 'PENDING' ? 'bg-yellow-400' : 'bg-gray-300'
+                  }`} />
+                  <div>
+                    <p className="text-sm text-gray-900">
+                      {DOC_TYPE_LABELS[doc.doc_type] ?? doc.doc_type}
+                    </p>
+                    <p className="text-xs text-gray-400">{doc.status}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => window.open(getPreviewUrl(doc.id).preview_url, '_blank')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-indigo-600 border border-indigo-200 rounded-lg hover:bg-indigo-50 transition-colors"
+                >
+                  <Eye className="w-3 h-3" />
+                  View
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Academic Scores */}
+      <div className="bg-white rounded-lg shadow-sm p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-indigo-600" />
+            <h2 className="text-base font-semibold text-gray-900">Score Verification</h2>
+          </div>
+          {isManualSource && (
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+              Manual Source
+            </span>
+          )}
+        </div>
+
+        {!record ? (
+          <p className="text-gray-400 text-sm">No academic record found for this application.</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              <div className="bg-gray-50 rounded-lg p-4">
+                <p className="text-xs text-gray-400 mb-1">Declared GPA (4.0 scale)</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {record.gpa_4 != null ? record.gpa_4.toFixed(2) : '—'}
+                </p>
+              </div>
+              <div className={`rounded-lg p-4 ${detail.gpa_100_converted != null || record.gpa_100 != null ? 'bg-indigo-50' : 'bg-gray-50'}`}>
+                <p className="text-xs text-gray-400 mb-1">YÖK 100-Scale Equivalent</p>
+                <p className="text-2xl font-bold text-indigo-700">
+                  {record.is_locked && record.gpa_100 != null
+                    ? record.gpa_100.toFixed(2)
+                    : detail.gpa_100_converted != null
+                      ? detail.gpa_100_converted.toFixed(2)
+                      : '—'}
+                </p>
+                {!record.is_locked && detail.gpa_100_converted != null && (
+                  <p className="text-xs text-indigo-500 mt-0.5">Auto-computed (YÖK table)</p>
+                )}
+              </div>
+              <div className="bg-gray-50 rounded-lg p-4">
+                <p className="text-xs text-gray-400 mb-1">YKS Score</p>
+                <p className="text-xl font-semibold text-gray-900">
+                  {record.yks_score != null ? record.yks_score.toFixed(3) : '—'}
+                </p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-4">
+                <p className="text-xs text-gray-400 mb-1">Data Source</p>
+                <p className="text-sm font-medium text-gray-900">{formatSource(record.source)}</p>
+              </div>
+            </div>
+
+            {/* Verify / Reject buttons */}
+            {!isLocked && (
+              <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
+                <button
+                  onClick={handleVerify}
+                  disabled={verifying || rejecting || !canVerify}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm"
+                >
+                  {verifying ? <Spinner /> : <CheckCircle className="w-4 h-4" />}
+                  {verifying ? 'Verifying…' : 'Verify & Confirm'}
+                </button>
+                <button
+                  onClick={handleReject}
+                  disabled={verifying || rejecting}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-white text-red-600 text-sm font-semibold rounded-lg border border-red-300 hover:bg-red-50 disabled:opacity-50 transition-colors"
+                >
+                  {rejecting ? <Spinner /> : <XCircle className="w-4 h-4" />}
+                  {rejecting ? 'Rejecting…' : 'Reject Application'}
+                </button>
+                {!canVerify && (
+                  <p className="text-xs text-gray-400">
+                    Scores must be corrected before verification.
+                  </p>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Manual Correction */}
+      <div className="bg-white rounded-lg shadow-sm p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Edit2 className="w-5 h-5 text-amber-500" />
+            <h2 className="text-base font-semibold text-gray-900">
+              {foreignScale ? 'Foreign Scale — Manual Entry' : 'Manual Score Correction'}
+            </h2>
+          </div>
+          {!isLocked && !foreignScale && (
+            <button
+              onClick={() => setShowCorrection(v => !v)}
+              className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${
+                showCorrection
+                  ? 'bg-gray-100 border-gray-300 text-gray-700'
+                  : 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100'
+              }`}
+            >
+              {showCorrection ? 'Collapse' : 'Edit Score / GPA'}
+            </button>
+          )}
+        </div>
+
+        {(showCorrection || foreignScale) ? (
+          <ScoreCorrectionPanel
+            applicationId={applicationId}
+            isLocked={isLocked}
+            forceForeignScale={foreignScale}
+            onCorrected={loadDetail}
+          />
+        ) : (
+          !isLocked && (
+            <p className="text-gray-400 text-sm">
+              Use "Edit Score / GPA" to manually correct a score if the declared data does not
+              match the uploaded documents.
+            </p>
+          )
+        )}
+      </div>
+
+      {/* Audit / Activity Log */}
+      <div className="bg-white rounded-lg shadow-sm p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Activity className="w-5 h-5 text-gray-400" />
+          <h2 className="text-base font-semibold text-gray-900">Application History</h2>
+        </div>
+
+        {statusHistory.length === 0 ? (
+          <p className="text-gray-400 text-sm">No status history available.</p>
+        ) : (
+          <div className="space-y-3">
+            {statusHistory.map((entry, i) => (
+              <div key={i} className="flex items-start gap-3">
+                <div className="mt-0.5 w-5 h-5 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                  <div className="w-2 h-2 rounded-full bg-indigo-500" />
+                </div>
+                <div className="flex-1 flex items-start justify-between">
+                  <div>
+                    <p className="text-sm text-gray-900">
+                      {entry.status.replace(/_/g, ' ')}
+                    </p>
+                    {entry.changed_by_role && (
+                      <p className="text-xs text-gray-400">
+                        by {entry.changed_by_role.replace(/_/g, ' ')}
+                      </p>
+                    )}
+                    {entry.note && (
+                      <p className="text-xs text-gray-500 mt-0.5 italic">"{entry.note}"</p>
+                    )}
+                  </div>
+                  <span className="text-xs text-gray-400 whitespace-nowrap ml-4">
+                    {new Date(entry.changed_at).toLocaleString(undefined, {
+                      dateStyle: 'medium',
+                      timeStyle: 'short',
+                    })}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {isManualSource && (
+          <div className="mt-4 pt-4 border-t border-gray-100">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 w-5 h-5 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+                <Edit2 className="w-2.5 h-2.5 text-amber-600" />
+              </div>
+              <div>
+                <p className="text-sm text-gray-900">Score Manually Corrected</p>
+                <p className="text-xs text-gray-400">
+                  Academic record source is MANUAL — at least one score was corrected by a YGK member.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Root YGK Dashboard
+// ---------------------------------------------------------------------------
+
+export default function YGKDashboard({
+  userName,
+  onLogout,
+}: {
+  userName: string
+  onLogout: () => void
+}) {
+  const [activeTab, setActiveTab] = useState<'overview' | 'pending'>('pending')
+  const [selected, setSelected] = useState<YGKApplicationSummary | null>(null)
+
+  return (
+    <div className="flex flex-1 min-h-screen">
+      <Sidebar userName={userName} role="Transfer Commission" onLogout={onLogout}>
+        <NavBtn
+          active={activeTab === 'overview' && !selected}
+          onClick={() => { setActiveTab('overview'); setSelected(null) }}
+          icon={Home}
+          label="Dashboard"
+        />
+        <NavBtn
+          active={activeTab === 'pending' && !selected}
+          onClick={() => { setActiveTab('pending'); setSelected(null) }}
+          icon={ClipboardList}
+          label="Pending Evaluation"
+        />
+      </Sidebar>
+
+      <div className="flex-1 p-8 bg-gray-50">
+        <div className="max-w-5xl mx-auto">
+
+          {/* Evaluation detail view */}
+          {selected && (
+            <EvaluationDetail
+              applicationId={selected.id}
+              applicantName={selected.applicant ?? 'Applicant'}
+              onBack={() => setSelected(null)}
+            />
+          )}
+
+          {/* Overview tab */}
+          {!selected && activeTab === 'overview' && (
+            <>
+              <div className="flex items-center gap-3 mb-8">
+                <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
+                  <ShieldCheck className="w-6 h-6 text-indigo-600" />
+                </div>
+                <div>
+                  <h1 className="text-2xl font-semibold text-gray-900">Transfer Commission</h1>
+                  <p className="text-gray-500 text-sm">Izmir Institute of Technology</p>
+                </div>
+              </div>
+              <div className="bg-white rounded-lg shadow-sm p-6">
+                <p className="text-gray-500 text-sm">
+                  Use the <strong>Pending Evaluation</strong> tab to review and verify applicant scores.
+                </p>
+              </div>
+            </>
+          )}
+
+          {/* Pending evaluation list */}
+          {!selected && activeTab === 'pending' && (
+            <ApplicationList onSelect={setSelected} />
+          )}
+
+        </div>
+      </div>
+    </div>
+  )
+}

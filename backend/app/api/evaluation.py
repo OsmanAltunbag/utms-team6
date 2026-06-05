@@ -45,13 +45,14 @@ async def list_applications_for_ygk(
     db: AsyncSession = Depends(get_db),
 ):
     from app.domain.application import Application
+    from app.domain.user import Applicant
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
     q = (
         select(Application)
         .options(
-            selectinload(Application.applicant),
+            selectinload(Application.applicant).selectinload(Applicant.user),
             selectinload(Application.program),
             selectinload(Application.period),
             selectinload(Application.academic_record),
@@ -116,7 +117,19 @@ async def verify_scores(
         "gpa_100": float(record.gpa_100) if record.gpa_100 else None,
         "yks_score": float(record.yks_score) if record.yks_score else None,
         "is_locked": record.is_locked,
+        "application_status": "RANKING",
     }
+
+
+@router.post("/applications/{application_id}/reject")
+async def reject_application(
+    application_id: uuid.UUID,
+    current_user=Depends(_require_ygk),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = EvaluationService(db)
+    await svc.reject_application(application_id, current_user.id)
+    return {"application_status": "REJECTED"}
 
 
 @router.post("/applications/{application_id}/correct-score")

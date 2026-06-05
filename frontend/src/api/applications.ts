@@ -6,7 +6,6 @@ import type {
   AcademicRecord,
   Document,
   DocType,
-  PresignedUploadResult,
   SubmitResult,
 } from '../types/application'
 
