@@ -30,7 +30,11 @@ class PeriodService:
 
         active_periods = await self._repo.get_active_periods()
         for p in active_periods:
-            if opens_at < p.closes_at and closes_at > p.opens_at:
+            p_closes = p.closes_at.replace(tzinfo=timezone.utc) if p.closes_at.tzinfo is None else p.closes_at
+            p_opens = p.opens_at.replace(tzinfo=timezone.utc) if p.opens_at.tzinfo is None else p.opens_at
+            opens_at_aware = opens_at.replace(tzinfo=timezone.utc) if opens_at.tzinfo is None else opens_at
+            closes_at_aware = closes_at.replace(tzinfo=timezone.utc) if closes_at.tzinfo is None else closes_at
+            if opens_at_aware < p_closes and closes_at_aware > p_opens:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="An overlapping active period already exists",
