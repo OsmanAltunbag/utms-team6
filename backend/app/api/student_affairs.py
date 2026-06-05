@@ -125,6 +125,9 @@ async def get_results(
                 "application_id": str(e.application_id),
                 "position": e.position,
                 "composite_score": float(e.composite_score),
+                "first_name": e.application.applicant.user.first_name,
+                "last_name": e.application.applicant.user.last_name,
+                "email": e.application.applicant.user.email,
             }
             for e in data["primary"]
         ],
@@ -133,6 +136,9 @@ async def get_results(
                 "application_id": str(e.application_id),
                 "position": e.position,
                 "composite_score": float(e.composite_score),
+                "first_name": e.application.applicant.user.first_name,
+                "last_name": e.application.applicant.user.last_name,
+                "email": e.application.applicant.user.email,
             }
             for e in data["waitlisted"]
         ],
