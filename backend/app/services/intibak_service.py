@@ -1,9 +1,5 @@
 """
 SPEC-012: Prepare Course Equivalence Table (Intibak)
-
-Changes from the original intibak_service.py:
-  - Added parse_transcript_for_table(): parses the applicant's transcript PDF,
-    writes the result to Document.extracted_data, and returns the parsed courses.
 """
 import uuid
 from datetime import datetime, timezone
@@ -16,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.storage import MinIOClient
 from app.domain.audit import AuditLog
-from app.domain.enums import AppStatus, DocType, IntibakStatus, RankStatus
+from app.domain.enums import AppStatus, IntibakStatus, RankStatus
 from app.domain.intibak import CourseMapping, IntibakTable
 from app.repositories.application_repository import ApplicationRepository
 
@@ -25,10 +21,6 @@ class IntibakService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
         self._app_repo = ApplicationRepository(db)
-
-    # ------------------------------------------------------------------
-    # Existing methods (unchanged)
-    # ------------------------------------------------------------------
 
     async def create_table(
         self,

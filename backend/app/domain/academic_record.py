@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import ForeignKey, Integer, Numeric, String, text
+from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, text
 from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -36,6 +36,9 @@ class AcademicRecord(Base):
     source: Mapped[Optional[str]] = mapped_column(
         String(50), nullable=True
     )  # 'UBYS', 'YOKSIS', 'OSYM', 'MANUAL'
+    is_locked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE")
+    )
 
     # Relationships
     application: Mapped["Application"] = relationship(
