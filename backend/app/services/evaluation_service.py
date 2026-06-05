@@ -1,7 +1,9 @@
 """
 SPEC-008: Verify Entrance Scores & Convert GPA
 """
+import asyncio
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Literal
 
@@ -120,7 +122,74 @@ class EvaluationService:
         self.db.add(log)
         await self.db.flush()
 
+        # Advance application to RANKING (UNDER_REVIEW → RANKING)
+        app.status = AppStatus.RANKING
+        app.updated_at = datetime.now(timezone.utc)
+        await self.db.flush()
+
+        status_log = AuditLog(
+            actor_id=evaluator_id,
+            action="STATUS_CHANGED",
+            entity_type="Application",
+            entity_id=app.id,
+            old_value={"status": AppStatus.UNDER_REVIEW.value},
+            new_value={"status": AppStatus.RANKING.value},
+        )
+        self.db.add(status_log)
+        await self.db.flush()
+
+        await self.db.commit()
+
+        try:
+            from app.core.redis import publish_status_change
+            await asyncio.wait_for(
+                publish_status_change(str(app.id), AppStatus.RANKING.value),
+                timeout=1.0,
+            )
+        except Exception:
+            pass  # non-fatal — SSE push is best-effort
+
         return record
+
+    async def reject_application(
+        self,
+        application_id: uuid.UUID,
+        evaluator_id: uuid.UUID,
+    ) -> None:
+        app = await self._app_repo.get_by_id(application_id)
+        if app is None:
+            raise HTTPException(status_code=404, detail="Application not found")
+        if app.status != AppStatus.UNDER_REVIEW:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Expected UNDER_REVIEW, got {app.status.value}",
+            )
+
+        app.status = AppStatus.REJECTED
+        app.updated_at = datetime.now(timezone.utc)
+        await self.db.flush()
+
+        log = AuditLog(
+            actor_id=evaluator_id,
+            action="STATUS_CHANGED",
+            entity_type="Application",
+            entity_id=app.id,
+            old_value={"status": AppStatus.UNDER_REVIEW.value},
+            new_value={"status": AppStatus.REJECTED.value},
+        )
+        self.db.add(log)
+        await self.db.flush()
+
+        await self.db.commit()
+
+        try:
+            from app.core.redis import publish_status_change
+            await asyncio.wait_for(
+                publish_status_change(str(app.id), AppStatus.REJECTED.value),
+                timeout=1.0,
+            )
+        except Exception:
+            pass
 
     async def manually_correct_score(
         self,

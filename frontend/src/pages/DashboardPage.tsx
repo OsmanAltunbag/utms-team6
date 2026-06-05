@@ -5,6 +5,7 @@ import {
   Home, FileText, Send, CheckCircle, Clock, Users,
   Settings, BarChart2, Upload, Eye, RefreshCw, PlusCircle,
   UserPlus, Trash2, Edit2, X, UserCheck, CalendarDays, ShieldCheck,
+  Megaphone, AlertTriangle, Trophy, ClipboardList,
 } from 'lucide-react'
 import { logout } from '../api/auth'
 import {
@@ -33,7 +34,10 @@ import {
   type ProgramOption,
   type PeriodOption,
 } from '../api/applications'
+import { getResults, publishResults } from '../api/staff'
+import type { ResultsResponse, ApplicantResult } from '../types/staff'
 import { useAuth } from '../context/AuthContext'
+import YGKDashboard from './YGKDashboard'
 import { Sidebar } from '../components/Sidebar'
 import { StatusBadge } from '../components/StatusBadge'
 import Spinner from '../components/Spinner'
@@ -806,6 +810,430 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
               )}
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// UC-03-02: Results & Announcement — Confirmation Modal
+// ---------------------------------------------------------------------------
+
+function PublishConfirmModal({
+  primaryCount,
+  waitlistedCount,
+  publishing,
+  onConfirm,
+  onCancel,
+}: {
+  primaryCount: number
+  waitlistedCount: number
+  publishing: boolean
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-start gap-4 mb-5">
+          <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
+            <AlertTriangle className="w-5 h-5 text-amber-600" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Confirm Result Publication</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              This action is <span className="font-semibold text-gray-700">irreversible</span>. Please review the details before proceeding.
+            </p>
+          </div>
+        </div>
+
+        <div className="bg-gray-50 rounded-lg p-4 mb-5 space-y-2 text-sm">
+          <div className="flex justify-between">
+            <span className="text-gray-500">Primary (Asil) candidates</span>
+            <span className="font-semibold text-gray-900">{primaryCount}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Waitlisted (Yedek) candidates</span>
+            <span className="font-semibold text-gray-900">{waitlistedCount}</span>
+          </div>
+          <div className="border-t border-gray-200 pt-2 flex justify-between">
+            <span className="text-gray-500">Total to be notified</span>
+            <span className="font-semibold text-indigo-600">{primaryCount + waitlistedCount}</span>
+          </div>
+        </div>
+
+        <p className="text-xs text-gray-500 mb-5">
+          All applicants will receive an email notification and their application status will be updated to <span className="font-medium text-gray-700">Announced</span>.
+        </p>
+
+        <div className="flex gap-3">
+          <button
+            onClick={onConfirm}
+            disabled={publishing}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          >
+            {publishing ? <Spinner /> : <Megaphone className="w-4 h-4" />}
+            {publishing ? 'Publishing…' : 'Confirm & Notify'}
+          </button>
+          <button
+            onClick={onCancel}
+            disabled={publishing}
+            className="px-4 py-2 border border-gray-300 text-sm rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// UC-03-02: Results & Announcement — Panel
+// ---------------------------------------------------------------------------
+
+function ResultsAnnouncementPanel() {
+  const [periods, setPeriods] = useState<PeriodOption[]>([])
+  const [programs, setPrograms] = useState<ProgramOption[]>([])
+  const [selectedPeriodId, setSelectedPeriodId] = useState('')
+  const [selectedProgramId, setSelectedProgramId] = useState('')
+  const [loadingOptions, setLoadingOptions] = useState(true)
+  const [loadingResults, setLoadingResults] = useState(false)
+  const [results, setResults] = useState<ResultsResponse | null>(null)
+  const [notFound, setNotFound] = useState(false)
+  const [publishing, setPublishing] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
+
+  useEffect(() => {
+    Promise.all([listOpenPeriods(), listPrograms()])
+      .then(([pers, progs]) => {
+        setPeriods(pers)
+        setPrograms(progs)
+        if (pers.length > 0) setSelectedPeriodId(pers[0].id)
+        if (progs.length > 0) setSelectedProgramId(progs[0].id)
+      })
+      .catch(() => toast.error('Failed to load periods or programs.'))
+      .finally(() => setLoadingOptions(false))
+  }, [])
+
+  async function handleLoad() {
+    if (!selectedPeriodId || !selectedProgramId) return
+    setLoadingResults(true)
+    setResults(null)
+    setNotFound(false)
+    try {
+      const data = await getResults(selectedPeriodId, selectedProgramId)
+      setResults(data)
+    } catch (err) {
+      const httpStatus = (err as { response?: { status?: number } })?.response?.status
+      if (httpStatus === 404) {
+        setNotFound(true)
+      } else {
+        toast.error(extractErrorMessage(err))
+      }
+    } finally {
+      setLoadingResults(false)
+    }
+  }
+
+  async function handlePublishConfirmed() {
+    setPublishing(true)
+    try {
+      const result = await publishResults(selectedPeriodId, selectedProgramId)
+      toast.success(
+        `Results published successfully! ${result.announced_count} applicant(s) have been notified and their status updated to Announced.`,
+        { duration: 6000 },
+      )
+      setShowConfirm(false)
+      await handleLoad()
+    } catch (err) {
+      const httpStatus = (err as { response?: { status?: number } })?.response?.status
+      if (httpStatus === 409) {
+        toast.error('Results have already been published for this period and program.')
+      } else if (httpStatus === 422) {
+        toast.error('The ranking must be approved before results can be published.')
+      } else {
+        toast.error(extractErrorMessage(err))
+      }
+      setShowConfirm(false)
+    } finally {
+      setPublishing(false)
+    }
+  }
+
+  const rankingStatusColors: Record<string, string> = {
+    DRAFT: 'bg-gray-100 text-gray-600',
+    APPROVED: 'bg-green-100 text-green-700',
+    PUBLISHED: 'bg-indigo-100 text-indigo-700',
+  }
+
+  return (
+    <div className="space-y-6">
+      {showConfirm && results && (
+        <PublishConfirmModal
+          primaryCount={results.primary.length}
+          waitlistedCount={results.waitlisted.length}
+          publishing={publishing}
+          onConfirm={handlePublishConfirmed}
+          onCancel={() => setShowConfirm(false)}
+        />
+      )}
+
+      <div>
+        <h1 className="text-2xl font-semibold text-gray-900">Results & Announcement</h1>
+        <p className="text-gray-500 text-sm mt-1">
+          View the approved ranking and publish transfer results to notify applicants.
+        </p>
+      </div>
+
+      {/* Selection card */}
+      <div className="bg-white rounded-lg shadow-sm p-6">
+        <h2 className="text-sm font-medium text-gray-700 mb-4">Select Period & Program</h2>
+        {loadingOptions ? (
+          <div className="flex justify-center py-4"><Spinner /></div>
+        ) : (
+          <div className="flex flex-col sm:flex-row gap-3 items-end">
+            <div className="flex-1">
+              <label className="block text-xs text-gray-500 mb-1">Application Period</label>
+              <select
+                value={selectedPeriodId}
+                onChange={e => { setSelectedPeriodId(e.target.value); setResults(null); setNotFound(false) }}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+              >
+                {periods.length === 0 && <option value="">No open periods</option>}
+                {periods.map(p => (
+                  <option key={p.id} value={p.id}>{p.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex-1">
+              <label className="block text-xs text-gray-500 mb-1">Program</label>
+              <select
+                value={selectedProgramId}
+                onChange={e => { setSelectedProgramId(e.target.value); setResults(null); setNotFound(false) }}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+              >
+                {programs.length === 0 && <option value="">No programs</option>}
+                {programs.map(p => (
+                  <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
+                ))}
+              </select>
+            </div>
+            <button
+              onClick={handleLoad}
+              disabled={loadingResults || !selectedPeriodId || !selectedProgramId}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors whitespace-nowrap"
+            >
+              {loadingResults ? <Spinner /> : <ClipboardList className="w-4 h-4" />}
+              Load Results
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* No ranking found */}
+      {notFound && (
+        <div className="bg-white rounded-lg shadow-sm p-10 text-center">
+          <Trophy className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+          <p className="text-gray-500 text-sm">No ranking found for the selected period and program combination.</p>
+        </div>
+      )}
+
+      {/* Results loaded */}
+      {results && (
+        <>
+          {/* Status & action bar */}
+          <div className="bg-white rounded-lg shadow-sm p-5 flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-4">
+              <div>
+                <p className="text-xs text-gray-400 mb-1">Ranking Status</p>
+                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${rankingStatusColors[results.status] ?? 'bg-gray-100 text-gray-600'}`}>
+                  {results.status}
+                </span>
+              </div>
+              {results.published_at && (
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">Published At</p>
+                  <p className="text-sm text-gray-700">
+                    {new Date(results.published_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {results.status === 'APPROVED' && !results.published_at && (
+              <button
+                onClick={() => setShowConfirm(true)}
+                disabled={publishing}
+                className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm"
+              >
+                <Megaphone className="w-4 h-4" />
+                Notify Results
+              </button>
+            )}
+
+            {results.status === 'PUBLISHED' && (
+              <div className="flex items-center gap-2 px-4 py-2 bg-indigo-50 border border-indigo-200 rounded-lg text-sm text-indigo-700">
+                <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                Results already published & applicants notified
+              </div>
+            )}
+
+            {results.status === 'DRAFT' && (
+              <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                Ranking must be approved before publishing
+              </div>
+            )}
+          </div>
+
+          {/* Primary candidates table */}
+          <ResultsTable
+            title="Primary Candidates (Asil)"
+            subtitle={`${results.primary.length} candidate(s) accepted for transfer`}
+            entries={results.primary}
+            accentColor="green"
+          />
+
+          {/* Waitlisted candidates table */}
+          <ResultsTable
+            title="Waitlisted Candidates (Yedek)"
+            subtitle={`${results.waitlisted.length} candidate(s) on the waitlist`}
+            entries={results.waitlisted}
+            accentColor="amber"
+          />
+        </>
+      )}
+    </div>
+  )
+}
+
+function ResultsTable({
+  title,
+  subtitle,
+  entries,
+  accentColor,
+}: {
+  title: string
+  subtitle: string
+  entries: ApplicantResult[]
+  accentColor: 'green' | 'amber'
+}) {
+  const headerColor = accentColor === 'green'
+    ? 'border-green-200 bg-green-50'
+    : 'border-amber-200 bg-amber-50'
+  const titleColor = accentColor === 'green' ? 'text-green-800' : 'text-amber-800'
+  const subtitleColor = accentColor === 'green' ? 'text-green-600' : 'text-amber-600'
+  const badgeColor = accentColor === 'green'
+    ? 'bg-green-100 text-green-700'
+    : 'bg-amber-100 text-amber-700'
+
+  return (
+    <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+      <div className={`px-6 py-4 border-b ${headerColor}`}>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className={`text-base font-semibold ${titleColor}`}>{title}</h2>
+            <p className={`text-xs mt-0.5 ${subtitleColor}`}>{subtitle}</p>
+          </div>
+          <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${badgeColor}`}>
+            {entries.length}
+          </span>
+        </div>
+      </div>
+
+      {entries.length === 0 ? (
+        <p className="text-gray-400 text-sm text-center py-10">No candidates in this list.</p>
+      ) : (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+              <th className="px-6 py-3 font-medium w-16">Rank</th>
+              <th className="px-6 py-3 font-medium">Applicant Info</th>
+              <th className="px-6 py-3 font-medium text-right">Composite Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((entry) => (
+              <tr key={entry.application_id} className="border-b border-gray-50 hover:bg-gray-50">
+                <td className="px-6 py-3">
+                  <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-gray-100 text-gray-700 text-xs font-semibold">
+                    {entry.position}
+                  </span>
+                </td>
+                <td className="px-6 py-3">
+                  {entry.first_name || entry.last_name ? (
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">{entry.first_name} {entry.last_name}</p>
+                      <p className="text-xs text-gray-400">{entry.email}</p>
+                    </div>
+                  ) : (
+                    <span className="font-mono text-gray-500 text-xs">{entry.application_id}</span>
+                  )}
+                </td>
+                <td className="px-6 py-3 text-right">
+                  <span className="font-semibold text-gray-900">{entry.composite_score.toFixed(2)}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// UC-03-02: Student Affairs Dashboard
+// ---------------------------------------------------------------------------
+
+function StudentAffairsDashboardContent({ userName, onLogout }: { userName: string; onLogout: () => void }) {
+  const [activeTab, setActiveTab] = useState<'overview' | 'results'>('overview')
+
+  return (
+    <div className="flex flex-1 min-h-screen">
+      <Sidebar userName={userName} role="Student Affairs" onLogout={onLogout}>
+        <NavBtn active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} icon={Home} label="Dashboard" />
+        <NavBtn active={activeTab === 'results'} onClick={() => setActiveTab('results')} icon={Megaphone} label="Results & Announcement" />
+        <NavBtn active={false} onClick={() => {}} icon={Users} label="Applications" />
+        <NavBtn active={false} onClick={() => {}} icon={BarChart2} label="Reports" />
+        <NavBtn active={false} onClick={() => {}} icon={Settings} label="Settings" />
+      </Sidebar>
+
+      <div className="flex-1 p-8 bg-gray-50">
+        <div className="max-w-5xl mx-auto">
+          {activeTab === 'overview' && (
+            <>
+              <div className="flex items-center gap-3 mb-8">
+                <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
+                  <FileText className="w-6 h-6 text-indigo-600" />
+                </div>
+                <div>
+                  <h1 className="text-2xl font-semibold text-gray-900">Student Affairs</h1>
+                  <p className="text-gray-500 text-sm">Izmir Institute of Technology</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-6 mb-8">
+                {[
+                  { label: 'Pending Review', value: '—', color: 'text-yellow-600' },
+                  { label: 'Approved', value: '—', color: 'text-green-600' },
+                  { label: 'Rejected', value: '—', color: 'text-red-600' },
+                ].map((stat) => (
+                  <div key={stat.label} className="bg-white rounded-lg shadow-sm p-6">
+                    <p className="text-gray-500 text-sm mb-1">{stat.label}</p>
+                    <p className={`text-3xl font-bold ${stat.color}`}>{stat.value}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="bg-white rounded-lg shadow-sm p-6">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4">Recent Applications</h2>
+                <p className="text-gray-500 text-sm">No applications to review at this time.</p>
+              </div>
+            </>
+          )}
+
+          {activeTab === 'results' && <ResultsAnnouncementPanel />}
         </div>
       </div>
     </div>
@@ -1912,9 +2340,9 @@ export default function DashboardPage() {
     case 'APPLICANT':
       return <ApplicantDashboardContent userName={displayName} onLogout={handleLogout} />
     case 'STUDENT_AFFAIRS':
-      return <StaffDashboardContent userName={displayName} roleLabel="Student Affairs" icon={FileText} onLogout={handleLogout} />
+      return <StudentAffairsDashboardContent userName={displayName} onLogout={handleLogout} />
     case 'TRANSFER_COMMISSION':
-      return <StaffDashboardContent userName={displayName} roleLabel="Transfer Commission" icon={Users} onLogout={handleLogout} />
+      return <YGKDashboard userName={displayName} onLogout={handleLogout} />
     case 'YDYO':
       return <StaffDashboardContent userName={displayName} roleLabel="Foreign Languages Office" icon={CheckCircle} onLogout={handleLogout} />
     case 'DEAN_OFFICE':

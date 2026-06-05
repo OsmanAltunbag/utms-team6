@@ -27,6 +27,9 @@ class ScoreCorrectionRequest(BaseModel):
 
 class EvaluateConditionsRequest(BaseModel):
     notes: Optional[str] = None
+    rejection_override: bool = False
+    portfolio_result: Optional[str] = None        # "Passed" | "Failed" | None
+    rejection_justification: Optional[str] = None # explicit rejection reason text
 
 
 class ManualCourseMappingRequest(BaseModel):
@@ -45,13 +48,14 @@ async def list_applications_for_ygk(
     db: AsyncSession = Depends(get_db),
 ):
     from app.domain.application import Application
+    from app.domain.user import Applicant
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
     q = (
         select(Application)
         .options(
-            selectinload(Application.applicant),
+            selectinload(Application.applicant).selectinload(Applicant.user),
             selectinload(Application.program),
             selectinload(Application.period),
             selectinload(Application.academic_record),
@@ -116,7 +120,19 @@ async def verify_scores(
         "gpa_100": float(record.gpa_100) if record.gpa_100 else None,
         "yks_score": float(record.yks_score) if record.yks_score else None,
         "is_locked": record.is_locked,
+        "application_status": "RANKING",
     }
+
+
+@router.post("/applications/{application_id}/reject")
+async def reject_application(
+    application_id: uuid.UUID,
+    current_user=Depends(_require_ygk),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = EvaluationService(db)
+    await svc.reject_application(application_id, current_user.id)
+    return {"application_status": "REJECTED"}
 
 
 @router.post("/applications/{application_id}/correct-score")
@@ -168,7 +184,12 @@ async def evaluate_conditions(
     from app.services.eligibility_engine import EligibilityEngine
     engine = EligibilityEngine(db)
     result = await engine.evaluate_department_conditions(
-        application_id, current_user.id, body.notes
+        application_id,
+        current_user.id,
+        notes=body.notes,
+        rejection_override=body.rejection_override,
+        portfolio_result=body.portfolio_result,
+        rejection_justification=body.rejection_justification,
     )
     return result
 

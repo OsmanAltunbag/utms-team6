@@ -215,12 +215,17 @@ class OfficerApplicationService:
         apps = list(apps_result.scalars().all())
 
         from datetime import datetime, timezone
+        from app.workers.notification_tasks import send_notification
+
+        notifications = []
         for app in apps:
             app.status = AppStatus.ANNOUNCED
-            self._enqueue_status_notification(app, officer_id, "Transfer sonuçlarınız açıklandı.")
+            notif = self._build_notification(app, "Transfer sonuçlarınız açıklandı.")
+            self.db.add(notif)
+            notifications.append(notif)
 
         ranking.published_at = datetime.now(timezone.utc)
-        await self.db.flush()
+        await self.db.flush()  # assigns IDs to all notifications
 
         log = AuditLog(
             actor_id=officer_id,
@@ -233,6 +238,10 @@ class OfficerApplicationService:
         self.db.add(log)
         await self.db.flush()
 
+        # Dispatch after flush so IDs are guaranteed — commit follows immediately
+        for notif in notifications:
+            send_notification.delay(str(notif.id))
+
         return {"announced_count": len(apps)}
 
     async def get_results(
@@ -241,10 +250,16 @@ class OfficerApplicationService:
         program_id: uuid.UUID,
     ) -> dict:
         from app.domain.ranking import Ranking, RankingEntry
+        from app.domain.user import Applicant
 
         ranking_result = await self.db.execute(
             select(Ranking)
-            .options(selectinload(Ranking.entries))
+            .options(
+                selectinload(Ranking.entries)
+                .selectinload(RankingEntry.application)
+                .selectinload(Application.applicant)
+                .selectinload(Applicant.user)
+            )
             .where(
                 Ranking.program_id == program_id,
                 Ranking.period_id == period_id,
@@ -260,23 +275,15 @@ class OfficerApplicationService:
 
     # ------------------------------------------------------------------
 
-    def _enqueue_status_notification(
-        self, app: Application, actor_id: uuid.UUID, message: str
-    ) -> None:
-        try:
-            from app.workers.notification_tasks import send_notification
-            from app.domain.notification import Notification
-            from app.domain.enums import NotifChannel, NotifStatus
+    def _build_notification(self, app: Application, message: str):
+        from app.domain.notification import Notification
+        from app.domain.enums import NotifChannel, NotifStatus
 
-            notif = Notification(
-                user_id=app.applicant_id,
-                application_id=app.id,
-                channel=NotifChannel.EMAIL,
-                subject="UTMS — Başvuru Durumu Güncellendi",
-                body=message,
-                status=NotifStatus.PENDING,
-            )
-            self.db.add(notif)
-            # Task will be sent after commit via send_notification.delay
-        except Exception:
-            pass
+        return Notification(
+            user_id=app.applicant_id,
+            application_id=app.id,
+            channel=NotifChannel.EMAIL,
+            subject="UTMS — Başvuru Durumu Güncellendi",
+            body=message,
+            status=NotifStatus.PENDING,
+        )

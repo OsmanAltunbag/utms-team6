@@ -35,7 +35,7 @@ class AcademicRecord(Base):
     )
     source: Mapped[Optional[str]] = mapped_column(
         String(50), nullable=True
-    )  # 'UBYS', 'YOKSIS', 'OSYM', 'MANUAL'
+    )  # 'USER_DECLARED', 'MANUAL'
     is_locked: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("FALSE")
     )

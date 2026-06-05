@@ -27,6 +27,7 @@ _TRANSITIONS: dict[AppStatus, set[AppStatus]] = {
     AppStatus.SUBMITTED: {AppStatus.UNDER_REVIEW, AppStatus.REJECTED},
     AppStatus.UNDER_REVIEW: {
         AppStatus.ENGLISH_REVIEW,
+        AppStatus.RANKING,
         AppStatus.CORRECTION_REQUESTED,
         AppStatus.REJECTED,
     },
