@@ -34,8 +34,18 @@ import {
   type ProgramOption,
   type PeriodOption,
 } from '../api/applications'
-import { getResults, publishResults } from '../api/staff'
-import type { ResultsResponse, ApplicantResult } from '../types/staff'
+import {
+  getResults, publishResults,
+  listStaffApplications, getStaffApplication,
+  approveVerification, requestCorrection, rejectStaffApplication,
+} from '../api/staff'
+import type {
+  ResultsResponse, ApplicantResult,
+  StaffApplicationSummary, StaffApplicationDetail,
+  RejectionReasonCode,
+} from '../types/staff'
+import { listNotifications } from '../api/applications'
+import type { NotificationMessage } from '../types/application'
 import { useAuth } from '../context/AuthContext'
 import YGKDashboard from './YGKDashboard'
 import { Sidebar } from '../components/Sidebar'
@@ -449,6 +459,8 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
   const [fetchingAcademic, setFetchingAcademic] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [hasNoApp, setHasNoApp] = useState(false)
+  const [notifications, setNotifications] = useState<NotificationMessage[]>([])
+  const [loadingMessages, setLoadingMessages] = useState(false)
 
   async function loadApplication(id?: string) {
     try {
@@ -475,6 +487,15 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
   }
 
   useEffect(() => { loadApplication() }, [])
+
+  useEffect(() => {
+    if (activeTab !== 'messages' || !application) return
+    setLoadingMessages(true)
+    listNotifications(application.id)
+      .then(setNotifications)
+      .catch(() => toast.error('Failed to load messages.'))
+      .finally(() => setLoadingMessages(false))
+  }, [activeTab, application?.id])
 
   // SSE: auto-refresh on status change
   useEffect(() => {
@@ -779,8 +800,35 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
           {/* ── Messages tab ──────────────────────────────────────────── */}
           {activeTab === 'messages' && (
             <div className="bg-white rounded-lg shadow-sm p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Messages with Student Affairs</h2>
-              <p className="text-gray-500 text-sm">No messages yet.</p>
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Messages & Notifications</h2>
+              {loadingMessages ? (
+                <div className="flex justify-center py-8"><Spinner /></div>
+              ) : notifications.length === 0 ? (
+                <p className="text-gray-500 text-sm">No notifications yet.</p>
+              ) : (
+                <div className="space-y-3">
+                  {notifications.map((n) => (
+                    <div key={n.id} className="border border-gray-100 rounded-lg p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">{n.subject ?? 'Notification'}</p>
+                          <p className="text-sm text-gray-600 mt-1">{n.message}</p>
+                        </div>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${
+                          n.status === 'SENT' ? 'bg-green-100 text-green-700'
+                          : n.status === 'FAILED' ? 'bg-red-100 text-red-700'
+                          : 'bg-yellow-100 text-yellow-700'
+                        }`}>
+                          {n.status}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-400 mt-2">
+                        {new Date(n.sent_at ?? n.created_at).toLocaleString()}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -1073,7 +1121,7 @@ function ResultsAnnouncementPanel() {
               </button>
             )}
 
-            {results.status === 'PUBLISHED' && (
+            {(results.status === 'PUBLISHED' || results.published_at) && (
               <div className="flex items-center gap-2 px-4 py-2 bg-indigo-50 border border-indigo-200 rounded-lg text-sm text-indigo-700">
                 <CheckCircle className="w-4 h-4 flex-shrink-0" />
                 Results already published & applicants notified
@@ -1185,54 +1233,443 @@ function ResultsTable({
 }
 
 // ---------------------------------------------------------------------------
+// SPEC-006: Application Review Panel
+// ---------------------------------------------------------------------------
+
+const REJECTION_CODES: RejectionReasonCode[] = [
+  'INVALID_DOCUMENT', 'FRAUDULENT_DOCUMENT', 'DUPLICATE_APPLICATION', 'MISSED_DEADLINE', 'OTHER',
+]
+
+function ApplicationsReviewPanel() {
+  const [apps, setApps] = useState<StaffApplicationSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [statusFilter, setStatusFilter] = useState('SUBMITTED')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [detail, setDetail] = useState<StaffApplicationDetail | null>(null)
+  const [loadingDetail, setLoadingDetail] = useState(false)
+  const [acting, setActing] = useState(false)
+  const [showCorrection, setShowCorrection] = useState(false)
+  const [showReject, setShowReject] = useState(false)
+  const [correctionNote, setCorrectionNote] = useState('')
+  const [rejectCode, setRejectCode] = useState<RejectionReasonCode>('INVALID_DOCUMENT')
+  const [rejectNote, setRejectNote] = useState('')
+  const [previewError, setPreviewError] = useState<string | null>(null)
+
+  async function loadList() {
+    setLoading(true)
+    try {
+      const data = await listStaffApplications(
+        statusFilter ? { status: statusFilter } : undefined,
+      )
+      setApps(data)
+    } catch {
+      toast.error('Failed to load applications.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function loadDetail(id: string) {
+    setLoadingDetail(true)
+    setPreviewError(null)
+    try {
+      const data = await getStaffApplication(id)
+      setDetail(data)
+      setSelectedId(id)
+    } catch {
+      toast.error('Failed to load application detail.')
+    } finally {
+      setLoadingDetail(false)
+    }
+  }
+
+  useEffect(() => { loadList() }, [statusFilter])
+
+  async function handleApprove() {
+    if (!selectedId) return
+    setActing(true)
+    try {
+      await approveVerification(selectedId)
+      toast.success('Documents verified — application moved to Under Review.')
+      await loadList()
+      await loadDetail(selectedId)
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setActing(false)
+    }
+  }
+
+  async function handleCorrection() {
+    if (!selectedId || !correctionNote.trim()) {
+      toast.error('Correction note is required.')
+      return
+    }
+    setActing(true)
+    try {
+      await requestCorrection(selectedId, correctionNote.trim())
+      toast.success('Correction requested — applicant notified.')
+      setShowCorrection(false)
+      setCorrectionNote('')
+      await loadList()
+      await loadDetail(selectedId)
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setActing(false)
+    }
+  }
+
+  async function handleReject() {
+    if (!selectedId) return
+    setActing(true)
+    try {
+      await rejectStaffApplication(selectedId, rejectCode, rejectNote)
+      toast.success('Application rejected — applicant notified.')
+      setShowReject(false)
+      setRejectNote('')
+      await loadList()
+      await loadDetail(selectedId)
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setActing(false)
+    }
+  }
+
+  function handlePreview(docId: string) {
+    setPreviewError(null)
+    const { preview_url } = getPreviewUrl(docId)
+    const win = window.open(preview_url, '_blank')
+    if (!win) {
+      setPreviewError('Document Cannot Be Viewed — popup blocked or file may be corrupted.')
+    }
+  }
+
+  const canAct = detail?.status === 'SUBMITTED'
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Application Review</h1>
+          <p className="text-gray-500 text-sm mt-1">Review documents and take verification actions.</p>
+        </div>
+        <select
+          value={statusFilter}
+          onChange={e => { setStatusFilter(e.target.value); setSelectedId(null); setDetail(null) }}
+          className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+        >
+          <option value="SUBMITTED">Submitted</option>
+          <option value="UNDER_REVIEW">Under Review</option>
+          <option value="CORRECTION_REQUESTED">Correction Requested</option>
+          <option value="REJECTED">Rejected</option>
+          <option value="">All</option>
+        </select>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        {/* List */}
+        <div className="lg:col-span-2 bg-white rounded-lg shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100">
+            <h2 className="text-sm font-semibold text-gray-900">Applications ({apps.length})</h2>
+          </div>
+          {loading ? (
+            <div className="flex justify-center py-12"><Spinner /></div>
+          ) : apps.length === 0 ? (
+            <p className="text-gray-500 text-sm text-center py-12">No applications found.</p>
+          ) : (
+            <div className="divide-y divide-gray-50 max-h-[600px] overflow-y-auto">
+              {apps.map(app => (
+                <button
+                  key={app.id}
+                  onClick={() => loadDetail(app.id)}
+                  className={`w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors ${
+                    selectedId === app.id ? 'bg-indigo-50 border-l-4 border-indigo-500' : ''
+                  }`}
+                >
+                  <p className="text-sm font-medium text-gray-900">
+                    {app.applicant_name ?? app.tracking_number ?? app.id.slice(0, 8)}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">{app.applicant_email}</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <StatusBadge status={app.status} />
+                    {app.auto_validation_results[0] && (
+                      <span className={`text-xs ${app.auto_validation_results[0].passed ? 'text-green-600' : 'text-amber-600'}`}>
+                        {app.auto_validation_results[0].passed ? 'Valid' : 'Issues'}
+                      </span>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Detail */}
+        <div className="lg:col-span-3 space-y-4">
+          {!selectedId ? (
+            <div className="bg-white rounded-lg shadow-sm p-12 text-center">
+              <FileText className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-500 text-sm">Select an application to review documents.</p>
+            </div>
+          ) : loadingDetail || !detail ? (
+            <div className="bg-white rounded-lg shadow-sm flex justify-center py-12"><Spinner /></div>
+          ) : (
+            <>
+              <div className="bg-white rounded-lg shadow-sm p-5">
+                <div className="flex items-start justify-between gap-4 mb-4">
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-900">
+                      {detail.applicant_name ?? 'Applicant'}
+                    </h2>
+                    <p className="text-sm text-gray-500">{detail.applicant_email}</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Tracking: {detail.tracking_number ?? '—'}
+                    </p>
+                  </div>
+                  <StatusBadge status={detail.status} />
+                </div>
+
+                {canAct && (
+                  <div className="flex flex-wrap gap-2 pt-3 border-t border-gray-100">
+                    <button
+                      onClick={handleApprove}
+                      disabled={acting}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {acting ? <Spinner /> : <CheckCircle className="w-4 h-4" />}
+                      Approve Verification
+                    </button>
+                    <button
+                      onClick={() => setShowCorrection(true)}
+                      disabled={acting}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-amber-500 text-white text-sm rounded-lg hover:bg-amber-600 disabled:opacity-50"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                      Request Correction
+                    </button>
+                    <button
+                      onClick={() => setShowReject(true)}
+                      disabled={acting}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50"
+                    >
+                      <X className="w-4 h-4" />
+                      Reject
+                    </button>
+                  </div>
+                )}
+
+                {detail.status === 'REJECTED' && (
+                  <p className="text-sm text-red-700 mt-3 pt-3 border-t border-red-100">
+                    This application has been rejected. No further actions available.
+                  </p>
+                )}
+              </div>
+
+              {/* Auto-validation */}
+              {apps.find(a => a.id === selectedId)?.auto_validation_results && (
+                <div className="bg-white rounded-lg shadow-sm p-5">
+                  <h3 className="text-sm font-semibold text-gray-900 mb-3">Auto-Validation</h3>
+                  <div className="space-y-1.5">
+                    {apps.find(a => a.id === selectedId)!.auto_validation_results
+                      .filter(r => r.check !== 'OVERALL')
+                      .map((r, i) => (
+                        <div key={i} className="flex items-center justify-between text-xs">
+                          <span className="text-gray-600">{r.doc_type} — {r.check}</span>
+                          <span className={r.passed ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>
+                            {r.passed ? 'Pass' : 'Fail'}
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Documents */}
+              <div className="bg-white rounded-lg shadow-sm p-5">
+                <h3 className="text-sm font-semibold text-gray-900 mb-3">Documents</h3>
+                {previewError && (
+                  <p className="text-sm text-red-600 mb-3 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    {previewError}
+                  </p>
+                )}
+                {detail.documents.length === 0 ? (
+                  <p className="text-gray-500 text-sm">No documents uploaded.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {detail.documents.map(doc => (
+                      <div key={doc.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+                        <div>
+                          <p className="text-sm text-gray-900">{doc.doc_type.replace(/_/g, ' ')}</p>
+                          <p className="text-xs text-gray-400">{doc.file_name}</p>
+                        </div>
+                        <button
+                          onClick={() => handlePreview(doc.id)}
+                          className="flex items-center gap-1 px-3 py-1.5 text-xs text-indigo-600 border border-indigo-200 rounded-lg hover:bg-indigo-50"
+                        >
+                          <Eye className="w-3.5 h-3.5" /> Preview
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {detail.eligibility_checks.length > 0 && (
+                <div className="bg-white rounded-lg shadow-sm p-5">
+                  <h3 className="text-sm font-semibold text-gray-900 mb-3">Eligibility Checks</h3>
+                  <div className="space-y-2">
+                    {detail.eligibility_checks.map((c, i) => (
+                      <div key={i} className="flex items-center justify-between text-sm">
+                        <span className="text-gray-700">{c.rule_key}</span>
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${c.passed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                          {c.passed ? 'Pass' : 'Fail'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Correction modal */}
+      {showCorrection && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-3">Request Correction</h2>
+            <textarea
+              value={correctionNote}
+              onChange={e => setCorrectionNote(e.target.value)}
+              rows={4}
+              placeholder="Describe what needs to be corrected…"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4"
+            />
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setShowCorrection(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+              <button onClick={handleCorrection} disabled={acting} className="px-4 py-2 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50">
+                {acting ? <Spinner /> : 'Send Request'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject modal */}
+      {showReject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-3">Reject Application</h2>
+            <select
+              value={rejectCode}
+              onChange={e => setRejectCode(e.target.value as RejectionReasonCode)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3"
+            >
+              {REJECTION_CODES.map(c => (
+                <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>
+              ))}
+            </select>
+            <textarea
+              value={rejectNote}
+              onChange={e => setRejectNote(e.target.value)}
+              rows={3}
+              placeholder="Additional notes (optional)…"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4"
+            />
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setShowReject(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+              <button onClick={handleReject} disabled={acting} className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50">
+                {acting ? <Spinner /> : 'Confirm Reject'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // UC-03-02: Student Affairs Dashboard
 // ---------------------------------------------------------------------------
 
+function StudentAffairsOverview() {
+  const [stats, setStats] = useState({ pending: 0, approved: 0, rejected: 0 })
+  const [recent, setRecent] = useState<StaffApplicationSummary[]>([])
+
+  useEffect(() => {
+    listStaffApplications()
+      .then(all => {
+        setStats({
+          pending: all.filter(a => a.status === 'SUBMITTED').length,
+          approved: all.filter(a => a.status === 'UNDER_REVIEW').length,
+          rejected: all.filter(a => a.status === 'REJECTED').length,
+        })
+        setRecent(all.slice(0, 5))
+      })
+      .catch(() => {})
+  }, [])
+
+  return (
+    <>
+      <div className="flex items-center gap-3 mb-8">
+        <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
+          <FileText className="w-6 h-6 text-indigo-600" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Student Affairs</h1>
+          <p className="text-gray-500 text-sm">Izmir Institute of Technology</p>
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-6 mb-8">
+        {[
+          { label: 'Pending Review', value: stats.pending, color: 'text-yellow-600' },
+          { label: 'Under Review', value: stats.approved, color: 'text-green-600' },
+          { label: 'Rejected', value: stats.rejected, color: 'text-red-600' },
+        ].map(s => (
+          <div key={s.label} className="bg-white rounded-lg shadow-sm p-6">
+            <p className="text-gray-500 text-sm mb-1">{s.label}</p>
+            <p className={`text-3xl font-bold ${s.color}`}>{s.value}</p>
+          </div>
+        ))}
+      </div>
+      <div className="bg-white rounded-lg shadow-sm p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Recent Applications</h2>
+        {recent.length === 0 ? (
+          <p className="text-gray-500 text-sm">No applications to review at this time.</p>
+        ) : (
+          <div className="space-y-2">
+            {recent.map(app => (
+              <div key={app.id} className="flex items-center justify-between text-sm py-2 border-b border-gray-50 last:border-0">
+                <span className="text-gray-900">{app.applicant_name ?? app.tracking_number}</span>
+                <StatusBadge status={app.status} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
 function StudentAffairsDashboardContent({ userName, onLogout }: { userName: string; onLogout: () => void }) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'results'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'applications' | 'results'>('overview')
 
   return (
     <div className="flex flex-1 min-h-screen">
       <Sidebar userName={userName} role="Student Affairs" onLogout={onLogout}>
         <NavBtn active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} icon={Home} label="Dashboard" />
+        <NavBtn active={activeTab === 'applications'} onClick={() => setActiveTab('applications')} icon={Users} label="Applications" />
         <NavBtn active={activeTab === 'results'} onClick={() => setActiveTab('results')} icon={Megaphone} label="Results & Announcement" />
-        <NavBtn active={false} onClick={() => {}} icon={Users} label="Applications" />
-        <NavBtn active={false} onClick={() => {}} icon={BarChart2} label="Reports" />
-        <NavBtn active={false} onClick={() => {}} icon={Settings} label="Settings" />
       </Sidebar>
 
       <div className="flex-1 p-8 bg-gray-50">
-        <div className="max-w-5xl mx-auto">
-          {activeTab === 'overview' && (
-            <>
-              <div className="flex items-center gap-3 mb-8">
-                <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
-                  <FileText className="w-6 h-6 text-indigo-600" />
-                </div>
-                <div>
-                  <h1 className="text-2xl font-semibold text-gray-900">Student Affairs</h1>
-                  <p className="text-gray-500 text-sm">Izmir Institute of Technology</p>
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-6 mb-8">
-                {[
-                  { label: 'Pending Review', value: '—', color: 'text-yellow-600' },
-                  { label: 'Approved', value: '—', color: 'text-green-600' },
-                  { label: 'Rejected', value: '—', color: 'text-red-600' },
-                ].map((stat) => (
-                  <div key={stat.label} className="bg-white rounded-lg shadow-sm p-6">
-                    <p className="text-gray-500 text-sm mb-1">{stat.label}</p>
-                    <p className={`text-3xl font-bold ${stat.color}`}>{stat.value}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="bg-white rounded-lg shadow-sm p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4">Recent Applications</h2>
-                <p className="text-gray-500 text-sm">No applications to review at this time.</p>
-              </div>
-            </>
-          )}
-
+        <div className="max-w-6xl mx-auto">
+          {activeTab === 'overview' && <StudentAffairsOverview />}
+          {activeTab === 'applications' && <ApplicationsReviewPanel />}
           {activeTab === 'results' && <ResultsAnnouncementPanel />}
         </div>
       </div>

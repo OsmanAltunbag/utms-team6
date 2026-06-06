@@ -5,15 +5,22 @@ SPEC-007: Student Affairs — Notify Transfer Results
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.core.dependencies import require_role
 from app.domain.enums import AppStatus, UserRole
-from app.schemas.application import ApplicationDetailResponse, ApplicationSummary
+from app.schemas.application import ApplicationDetailResponse, EligibilityCheckResponse
+from app.schemas.document import DocumentSummary
+from app.schemas.staff import (
+    AutoValidationResult,
+    StaffApplicationDetail,
+    StaffApplicationSummary,
+)
+from app.services.document_validation import build_auto_validation_results
 from app.services.officer_service import OfficerApplicationService
-from pydantic import BaseModel
 
 router = APIRouter()
 
@@ -33,11 +40,23 @@ class PublishResultsResponse(BaseModel):
     announced_count: int
 
 
+def _applicant_name(app) -> Optional[str]:
+    user = getattr(getattr(app, "applicant", None), "user", None)
+    if user is None:
+        return None
+    return f"{user.first_name} {user.last_name}".strip()
+
+
+def _applicant_email(app) -> Optional[str]:
+    user = getattr(getattr(app, "applicant", None), "user", None)
+    return user.email if user else None
+
+
 # ---------------------------------------------------------------------------
 # SPEC-006 endpoints
 # ---------------------------------------------------------------------------
 
-@router.get("/applications", response_model=list[ApplicationSummary])
+@router.get("/applications", response_model=list[StaffApplicationSummary])
 async def list_applications(
     status: Optional[AppStatus] = None,
     program_id: Optional[uuid.UUID] = None,
@@ -47,22 +66,57 @@ async def list_applications(
 ):
     svc = OfficerApplicationService(db)
     apps = await svc.list_applications(status, program_id, period_id)
-    return [ApplicationSummary.model_validate(a) for a in apps]
+    return [
+        StaffApplicationSummary(
+            id=app.id,
+            program_id=app.program_id,
+            period_id=app.period_id,
+            status=app.status.value,
+            tracking_number=app.tracking_number,
+            submitted_at=app.submitted_at,
+            created_at=app.created_at,
+            applicant_name=_applicant_name(app),
+            applicant_email=_applicant_email(app),
+            auto_validation_results=[
+                AutoValidationResult(**r)
+                for r in build_auto_validation_results(app)
+            ],
+        )
+        for app in apps
+    ]
 
 
-@router.get("/applications/{application_id}", response_model=ApplicationDetailResponse)
+@router.get("/applications/{application_id}", response_model=StaffApplicationDetail)
 async def get_application(
     application_id: uuid.UUID,
     current_user=Depends(_require_sa),
     db: AsyncSession = Depends(get_db),
 ):
-    from app.repositories.application_repository import ApplicationRepository
-    repo = ApplicationRepository(db)
-    app = await repo.get_by_id(application_id)
-    if app is None:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="Application not found")
-    return ApplicationDetailResponse.model_validate(app)
+    svc = OfficerApplicationService(db)
+    app = await svc.get_application(application_id)
+    return StaffApplicationDetail(
+        id=app.id,
+        applicant_id=app.applicant_id,
+        program_id=app.program_id,
+        period_id=app.period_id,
+        status=app.status.value,
+        tracking_number=app.tracking_number,
+        submitted_at=app.submitted_at,
+        created_at=app.created_at,
+        updated_at=app.updated_at,
+        progress=app.get_progress(),
+        eligibility_checks=[
+            EligibilityCheckResponse(
+                rule_key=c.rule_key,
+                passed=c.passed,
+                detail=c.detail,
+            )
+            for c in app.eligibility_checks
+        ],
+        applicant_name=_applicant_name(app),
+        applicant_email=_applicant_email(app),
+        documents=[DocumentSummary.model_validate(d) for d in app.documents],
+    )
 
 
 @router.post("/applications/{application_id}/approve-verification")

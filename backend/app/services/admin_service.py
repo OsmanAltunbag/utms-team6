@@ -14,8 +14,9 @@ from app.domain.user import Staff, User
 from app.repositories.eligibility_repository import DepartmentRequirementRepository
 from app.repositories.program_repository import ProgramRepository
 from app.repositories.user_repository import UserRepository
+from app.core.config import settings
 from app.schemas.admin import ConditionCreateRequest, ConditionUpdateRequest, StaffCreateRequest
-from app.workers.tasks import send_welcome_staff_email_impl
+from app.services.notification_service import NotificationService
 
 _VALID_RULE_KEYS = {
     "MIN_GPA",
@@ -137,10 +138,19 @@ class AdminService:
         self.db.add(staff)
         await self.db.flush()
 
-        if background_tasks is not None:
-            background_tasks.add_task(send_welcome_staff_email_impl, payload.email, payload.first_name, temp_password)
-        else:
-            send_welcome_staff_email_impl(payload.email, payload.first_name, temp_password)
+        notif_svc = NotificationService(self.db)
+        await notif_svc.enqueue(
+            user_id=user.id,
+            subject="UTMS — Personel Hesabınız Oluşturuldu",
+            template="welcome_staff",
+            template_vars={
+                "first_name": payload.first_name,
+                "email": payload.email,
+                "temp_password": temp_password,
+                "login_url": f"{settings.FRONTEND_URL}/login",
+                "title": "Hoş Geldiniz",
+            },
+        )
 
         log = AuditLog(
             actor_id=created_by,

@@ -33,8 +33,10 @@ from app.schemas.document import (
     PresignedUploadResponse,
     VerifyDocumentResponse,
 )
+from app.schemas.notification import NotificationResponse
 from app.services.application_service import ApplicationService
 from app.services.document_service import DocumentService
+from app.services.notification_service import NotificationService
 
 _PIPELINE_STAGES = [
     {"name": "SUBMITTED",      "label_tr": "Başvuru Alındı",        "label_en": "Submitted"},
@@ -248,6 +250,47 @@ async def change_status(
         note=body.note,
     )
     return {"application_id": str(application.id), "status": application.status.value}
+
+
+@router.get(
+    "/{application_id}/notifications",
+    response_model=List[NotificationResponse],
+)
+async def list_application_notifications(
+    application_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> List[NotificationResponse]:
+    repo = ApplicationRepository(db)
+    application = await repo.get_by_id(application_id)
+    if application is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    if current_user.role == UserRole.APPLICANT:
+        if application.applicant_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+    elif current_user.role not in (
+        UserRole.STUDENT_AFFAIRS,
+        UserRole.SYSTEM_ADMIN,
+        UserRole.TRANSFER_COMMISSION,
+        UserRole.YDYO,
+        UserRole.DEAN_OFFICE,
+    ):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+    notif_svc = NotificationService(db)
+    notifications = await notif_svc.get_delivery_log(application_id)
+    return [
+        NotificationResponse(
+            id=n.id,
+            subject=n.subject,
+            message=NotificationService.display_message(n.body),
+            status=n.status.value,
+            sent_at=n.sent_at,
+            created_at=n.created_at,
+        )
+        for n in notifications
+    ]
 
 
 # ---------------------------------------------------------------------------

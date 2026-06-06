@@ -14,6 +14,7 @@ from app.domain.english import EnglishProficiencyReview
 from app.domain.enums import AppStatus
 from app.repositories.application_repository import ApplicationRepository
 from app.services.application_service import ApplicationService
+from app.services.notification_service import NotificationService
 
 
 _VALID_REJECTION_REASONS = {
@@ -74,7 +75,11 @@ class EnglishProficiencyService:
         self.db.add(log)
         await self.db.flush()
 
-        self._notify(app, "İngilizce yeterlilik onaylandı. Bölüm değerlendirmesine geçildi.")
+        await self._notify(
+            app,
+            decision="Onaylandı",
+            reason="İngilizce yeterlilik onaylandı. Bölüm değerlendirmesine geçildi.",
+        )
         return review
 
     async def reject(
@@ -125,7 +130,11 @@ class EnglishProficiencyService:
         self.db.add(log)
         await self.db.flush()
 
-        self._notify(app, f"İngilizce yeterlilik reddedildi. Sebep: {rejection_reason}")
+        await self._notify(
+            app,
+            decision="Reddedildi",
+            reason=f"İngilizce yeterlilik reddedildi. Sebep: {rejection_reason}",
+        )
         return review
 
     # ------------------------------------------------------------------
@@ -181,18 +190,16 @@ class EnglishProficiencyService:
 
         return {"processed": processed, "passed_count": passed_count, "failed_count": failed_count}
 
-    def _notify(self, app, message: str) -> None:
-        try:
-            from app.domain.notification import Notification
-            from app.domain.enums import NotifChannel, NotifStatus
-            notif = Notification(
-                user_id=app.applicant_id,
-                application_id=app.id,
-                channel=NotifChannel.EMAIL,
-                subject="UTMS — İngilizce Yeterlilik Sonucu",
-                body=message,
-                status=NotifStatus.PENDING,
-            )
-            self.db.add(notif)
-        except Exception:
-            pass
+    async def _notify(self, app, decision: str, reason: str) -> None:
+        notif_svc = NotificationService(self.db)
+        await notif_svc.enqueue(
+            user_id=app.applicant_id,
+            subject="UTMS — İngilizce Yeterlilik Kararı",
+            application_id=app.id,
+            template="english_decision",
+            template_vars={
+                "decision": decision,
+                "reason": reason,
+                "title": "İngilizce Yeterlilik Kararı",
+            },
+        )

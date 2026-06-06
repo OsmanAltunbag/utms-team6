@@ -1,0 +1,13 @@
+<h2 style="margin:0 0 16px;color:#1a3a6b;font-size:22px;">Başvuru Durumu Güncellendi</h2>
+<p style="margin:0 0 12px;color:#444;font-size:15px;line-height:1.7;">
+  Başvurunuzun durumu güncellendi.
+</p>
+<p style="margin:0 0 8px;color:#666;font-size:14px;">
+  Önceki durum: <strong>{{ old_status }}</strong><br>
+  Yeni durum: <strong>{{ new_status }}</strong>
+</p>
+{% if note %}
+<p style="margin:16px 0 0;color:#555;font-size:14px;line-height:1.6;padding:12px;background:#f7f9fc;border-radius:6px;">
+  {{ note }}
+</p>
+{% endif %}

@@ -9,31 +9,20 @@ from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-import sqlalchemy
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import settings
 from app.workers.celery_app import celery_app
+from app.workers.template_renderer import parse_notification_body, render_template
 
 logger = logging.getLogger(__name__)
 
-_HEADER_COLOR = "#1a3a6b"
-_BTN_COLOR = "#1a3a6b"
-
-
-# ---------------------------------------------------------------------------
-# Sync DB helper (Celery workers are synchronous)
-# ---------------------------------------------------------------------------
 
 def _get_sync_session() -> Session:
     engine = create_engine(settings.DATABASE_URL_SYNC, pool_pre_ping=True)
     return Session(engine)
 
-
-# ---------------------------------------------------------------------------
-# SMTP helper
-# ---------------------------------------------------------------------------
 
 def _smtp_send(to_address: str, subject: str, html_body: str) -> None:
     if not settings.SMTP_USERNAME or not settings.SMTP_PASSWORD:
@@ -53,55 +42,24 @@ def _smtp_send(to_address: str, subject: str, html_body: str) -> None:
         smtp.sendmail(settings.FROM_EMAIL, [to_address], msg.as_string())
 
 
-def _wrap_html(title: str, body_content: str) -> str:
-    return f"""<!DOCTYPE html>
-<html lang="tr">
-<head><meta charset="UTF-8"><title>{title}</title></head>
-<body style="margin:0;padding:0;background:#f0f4f8;font-family:Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 0;background:#f0f4f8;">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0"
-             style="background:#fff;border-radius:10px;overflow:hidden;
-                    box-shadow:0 4px 16px rgba(0,0,0,.1);max-width:600px;width:100%;">
-        <tr>
-          <td style="background:{_HEADER_COLOR};padding:32px 40px;text-align:center;">
-            <p style="margin:0;color:#a0b8d8;font-size:13px;letter-spacing:1px;text-transform:uppercase;">
-              İzmir Yüksek Teknoloji Enstitüsü
-            </p>
-            <h1 style="margin:8px 0 0;color:#fff;font-size:20px;font-weight:700;">
-              UTMS
-            </h1>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:40px 40px 32px;">
-            {body_content}
-          </td>
-        </tr>
-        <tr>
-          <td style="background:#f7f9fc;border-top:1px solid #e8ecf0;padding:24px 40px;text-align:center;">
-            <p style="margin:0;color:#8a9ab0;font-size:12px;">
-              Bu e-posta otomatik olarak gönderilmiştir. Lütfen yanıtlamayınız.<br>
-              &copy; 2026 UTMS — İzmir Yüksek Teknoloji Enstitüsü
-            </p>
-          </td>
-        </tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>"""
+def _render_html(subject: str, body: str) -> str:
+    template_name, variables, plain = parse_notification_body(body)
+    if template_name:
+        variables.setdefault("title", subject or "UTMS Bildirimi")
+        return render_template(template_name, variables)
+    from app.workers.template_renderer import _env
+    return _env.get_template("base.html").render(
+        title=subject or "UTMS Bildirimi",
+        body_content=f'<p style="color:#444;font-size:15px;line-height:1.7;">{plain}</p>',
+    )
 
-
-# ---------------------------------------------------------------------------
-# Main Celery task
-# ---------------------------------------------------------------------------
 
 @celery_app.task(
     name="app.workers.notification_tasks.send_notification",
     bind=True,
     max_retries=5,
-    task_acks_late=True,
+    default_retry_delay=60,
+    acks_late=True,
 )
 def send_notification(self, notification_id: str) -> None:
     from app.domain.notification import Notification
@@ -109,7 +67,11 @@ def send_notification(self, notification_id: str) -> None:
 
     session = _get_sync_session()
     try:
-        notif = session.get(Notification, uuid.UUID(notification_id))
+        notif = session.execute(
+            select(Notification)
+            .options(selectinload(Notification.user))
+            .where(Notification.id == uuid.UUID(notification_id))
+        ).scalar_one_or_none()
         if notif is None:
             logger.error("Notification %s not found", notification_id)
             return
@@ -117,15 +79,11 @@ def send_notification(self, notification_id: str) -> None:
         if notif.status == NotifStatus.SENT:
             return
 
-        user = notif.user
-        to_address = user.email
+        to_address = notif.user.email
+        subject = notif.subject or "UTMS Bildirimi"
+        html_body = _render_html(subject, notif.body)
 
-        html_body = _wrap_html(
-            notif.subject or "UTMS Bildirimi",
-            notif.body,
-        )
-
-        _smtp_send(to_address, notif.subject or "UTMS Bildirimi", html_body)
+        _smtp_send(to_address, subject, html_body)
 
         notif.status = NotifStatus.SENT
         notif.sent_at = datetime.now(timezone.utc)
@@ -135,16 +93,23 @@ def send_notification(self, notification_id: str) -> None:
     except Exception as exc:
         session.rollback()
         try:
-            from app.domain.notification import Notification
-            from app.domain.enums import NotifStatus
             notif = session.get(Notification, uuid.UUID(notification_id))
             if notif:
                 notif.retry_count = (notif.retry_count or 0) + 1
                 if notif.retry_count >= notif.max_retries:
                     notif.status = NotifStatus.FAILED
+                    logger.error(
+                        "Notification %s failed after %s retries: %s",
+                        notification_id,
+                        notif.retry_count,
+                        exc,
+                    )
                 session.commit()
         except Exception:
             pass
+
+        if self.request.retries >= self.max_retries:
+            return
 
         delay = 60 * (2 ** self.request.retries)
         raise self.retry(exc=exc, countdown=delay)
