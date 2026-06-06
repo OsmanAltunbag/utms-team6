@@ -1340,7 +1340,7 @@ function RoleBadge({ role }: { role: StaffRole }) {
   )
 }
 
-function CreateStaffModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function CreateStaffModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void | Promise<void> }) {
   const [form, setForm] = useState({
     email: '',
     first_name: '',
@@ -1350,6 +1350,11 @@ function CreateStaffModal({ onClose, onCreated }: { onClose: () => void; onCreat
     title: '',
   })
   const [loading, setLoading] = useState(false)
+  const [programs, setPrograms] = useState<ProgramOption[]>([])
+
+    useEffect(() => {
+        listPrograms().then(setPrograms).catch(() => {})
+    }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -1360,7 +1365,7 @@ function CreateStaffModal({ onClose, onCreated }: { onClose: () => void; onCreat
         department: form.department || undefined,
         title: form.title || undefined,
       })
-      toast.success('Staff account created. Welcome email sent.')
+      toast.success('Staff account created. Welcome email sent. The new staff member will appear after page refresh.')
       onCreated()
       onClose()
     } catch (err: unknown) {
@@ -1408,7 +1413,19 @@ function CreateStaffModal({ onClose, onCreated }: { onClose: () => void; onCreat
               ))}
             </select>
           </div>
-          {field('Department', 'department')}
+            <div>
+                <label className="block text-sm text-gray-700 mb-1">Department</label>
+                <select
+                    value={form.department}
+                    onChange={e => setForm(f => ({ ...f, department: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                >
+                    <option value="">— Select Department —</option>
+                    {programs.map(p => (
+                        <option key={p.id} value={p.name}>{p.code} — {p.name}</option>
+                    ))}
+                </select>
+            </div>
           {field('Title', 'title')}
           <div className="flex gap-3 pt-2">
             <button
@@ -2187,9 +2204,9 @@ function AdminDashboardContent({ userName, onLogout }: { userName: string; onLog
 
   return (
     <div className="flex flex-1 min-h-screen">
-      {showCreate && (
-        <CreateStaffModal onClose={() => setShowCreate(false)} onCreated={loadStaff} />
-      )}
+       {showCreate && (
+            <CreateStaffModal onClose={() => setShowCreate(false)} onCreated={loadStaff} />
+       )}
       {editingStaff && (
         <ChangeRoleModal staff={editingStaff} onClose={() => setEditingStaff(null)} onUpdated={loadStaff} />
       )}
