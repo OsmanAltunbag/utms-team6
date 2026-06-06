@@ -11,9 +11,7 @@ import { StatusBadge } from '../components/StatusBadge'
 import { extractErrorMessage, logout } from '../api/auth'
 import { useAuth } from '../context/AuthContext'
 import {
-  createIntibakTable,
-  getIntibakTable,
-  getIntibakTableByApplication,
+  ensureIntibakTable,
   parseTranscript,
   suggestMatch,
   addMapping,
@@ -139,20 +137,8 @@ export default function IntibakPage() {
   async function loadData() {
     if (!applicationId) return
     try {
-      let resolvedTableId: string
-      try {
-        const created = await createIntibakTable(applicationId)
-        resolvedTableId = created.id
-      } catch (err: any) {
-        if (err?.response?.status === 409) {
-          const existing = await getIntibakTableByApplication(applicationId)
-          resolvedTableId = existing.id
-        } else {
-          throw err
-        }
-      }
-      setTableId(resolvedTableId)
-      const t = await getIntibakTable(resolvedTableId)
+      const t = await ensureIntibakTable(applicationId)
+      setTableId(t.id)
       setTable(t)
       setRows(t.mappings.map(mappingToRow))
       const detail = await getEvaluationDetail(t.application_id).catch(() => null)

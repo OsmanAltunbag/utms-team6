@@ -67,19 +67,76 @@ export interface SuggestedCourse {
   credits: number
 }
 
+// Backend returns course_mappings with source_course/target_course; normalize for the UI.
+function splitCourseField(value: string): { code: string | null; name: string } {
+  const trimmed = value.trim()
+  if (!trimmed) return { code: null, name: '' }
+  const match = trimmed.match(/^([A-Za-z0-9]+)\s+(.+)$/)
+  if (match) return { code: match[1], name: match[2] }
+  return { code: null, name: trimmed }
+}
+
+function joinCourseField(code: string | undefined | null, name: string | undefined | null): string {
+  const c = code?.trim()
+  const n = name?.trim()
+  if (c && n) return `${c} ${n}`
+  return c || n || ''
+}
+
+function normalizeMapping(raw: Record<string, unknown>): CourseMapping {
+  const sourceRaw = (raw.source_course_name ?? raw.source_course ?? '') as string
+  const targetRaw = (raw.target_course_name ?? raw.target_course ?? '') as string
+  const source = splitCourseField(sourceRaw)
+  const target = splitCourseField(targetRaw)
+
+  return {
+    id: String(raw.id),
+    source_course_code: (raw.source_course_code as string) ?? source.code,
+    source_course_name: source.name || sourceRaw,
+    source_credits: Number(raw.source_credits ?? 0),
+    target_course_code: (raw.target_course_code as string) ?? target.code,
+    target_course_name: target.name || targetRaw || null,
+    target_credits: raw.target_credits != null ? Number(raw.target_credits) : null,
+    equivalence_type: raw.equivalence_type as EquivalenceType,
+    notes: (raw.notes as string) ?? null,
+  }
+}
+
+function normalizeIntibakTable(data: Record<string, unknown>): IntibakTable {
+  const rawMappings = (data.mappings ?? data.course_mappings ?? []) as Record<string, unknown>[]
+  return {
+    id: String(data.id),
+    application_id: String(data.application_id),
+    status: String(data.status),
+    mappings: rawMappings.map(normalizeMapping),
+  }
+}
+
+/** Load existing table, or create one only when none exists (avoids 409 noise). */
+export async function ensureIntibakTable(applicationId: string): Promise<IntibakTable> {
+  try {
+    const { data } = await client.get(`/applications/${applicationId}/intibak`)
+    return normalizeIntibakTable(data)
+  } catch (err) {
+    if (!axios.isAxiosError(err) || err.response?.status !== 404) throw err
+    await client.post(`/applications/${applicationId}/intibak`)
+    const { data } = await client.get(`/applications/${applicationId}/intibak`)
+    return normalizeIntibakTable(data)
+  }
+}
+
 export async function createIntibakTable(applicationId: string): Promise<IntibakTable> {
-  const { data } = await client.post<IntibakTable>(`/applications/${applicationId}/intibak`)
-  return data
+  return ensureIntibakTable(applicationId)
 }
 
 export async function getIntibakTable(tableId: string): Promise<IntibakTable> {
-  const { data } = await client.get<IntibakTable>(`/intibak/${tableId}`)
-  return data
+  const { data } = await client.get(`/intibak/${tableId}`)
+  return normalizeIntibakTable(data)
 }
 
 export async function getIntibakTableByApplication(applicationId: string): Promise<IntibakTable> {
-  const { data } = await client.get<IntibakTable>(`/applications/${applicationId}/intibak`)
-  return data
+  const { data } = await client.get(`/applications/${applicationId}/intibak`)
+  return normalizeIntibakTable(data)
 }
 
 export async function parseTranscript(tableId: string): Promise<{ courses: ParsedCourse[] }> {
@@ -110,8 +167,15 @@ export async function addMapping(
     notes?: string
   },
 ): Promise<CourseMapping> {
-  const { data } = await client.post<CourseMapping>(`/intibak/${tableId}/mappings`, payload)
-  return data
+  const { data } = await client.post(`/intibak/${tableId}/mappings`, {
+    source_course: joinCourseField(payload.source_course_code, payload.source_course_name),
+    source_credits: payload.source_credits,
+    target_course: joinCourseField(payload.target_course_code, payload.target_course_name),
+    target_credits: payload.target_credits,
+    equivalence_type: payload.equivalence_type,
+    notes: payload.notes,
+  })
+  return normalizeMapping(data)
 }
 
 export async function updateMapping(
@@ -125,14 +189,19 @@ export async function updateMapping(
     notes?: string
   },
 ): Promise<CourseMapping> {
-  const { data } = await client.put<CourseMapping>(
-    `/intibak/${tableId}/mappings/${mappingId}`,
-    payload,
-  )
-  return data
+  const body: Record<string, unknown> = {}
+  if (payload.target_course_name !== undefined || payload.target_course_code !== undefined) {
+    body.target_course = joinCourseField(payload.target_course_code, payload.target_course_name)
+  }
+  if (payload.target_credits !== undefined) body.target_credits = payload.target_credits
+  if (payload.equivalence_type !== undefined) body.equivalence_type = payload.equivalence_type
+  if (payload.notes !== undefined) body.notes = payload.notes
+
+  const { data } = await client.put(`/intibak/${tableId}/mappings/${mappingId}`, body)
+  return normalizeMapping(data)
 }
 
 export async function submitIntibakTable(tableId: string): Promise<IntibakTable> {
-  const { data } = await client.post<IntibakTable>(`/intibak/${tableId}/submit`)
-  return data
+  const { data } = await client.post(`/intibak/${tableId}/submit`)
+  return normalizeIntibakTable(data)
 }
