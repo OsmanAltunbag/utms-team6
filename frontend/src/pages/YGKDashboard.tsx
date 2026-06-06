@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import {
   Home, ClipboardList, ArrowLeft, Eye, CheckCircle, XCircle,
@@ -13,6 +14,7 @@ import { extractErrorMessage } from '../api/auth'
 import { getApplicationStatus, listPrograms, listOpenPeriods } from '../api/applications'
 import type { ProgramOption, PeriodOption } from '../api/applications'
 import { getPreviewUrl } from '../api/applications'
+import { createIntibakTable, getIntibakTableByApplication } from '../api/intibak'
 import {
   listYGKApplications,
   getEvaluationDetail,
@@ -722,6 +724,7 @@ function EvaluationDetail({
   applicantName: string
   onBack: () => void
 }) {
+  const navigate = useNavigate()
   const [detail, setDetail] = useState<YGKEvaluationDetail | null>(null)
   const [statusHistory, setStatusHistory] = useState<Array<{
     status: string; changed_at: string; changed_by_role: string | null; note: string | null
@@ -731,6 +734,7 @@ function EvaluationDetail({
   const [rejecting, setRejecting] = useState(false)
   const [showCorrection, setShowCorrection] = useState(false)
   const [foreignScale, setForeignScale] = useState(false)
+  const [preparingIntibak, setPreparingIntibak] = useState(false)
 
   async function loadDetail() {
     try {
@@ -796,6 +800,27 @@ function EvaluationDetail({
     }
   }
 
+  async function handlePrepareIntibak() {
+    setPreparingIntibak(true)
+    try {
+      const table = await createIntibakTable(applicationId)
+      navigate(`/intibak/${table.id}`)
+    } catch (err: any) {
+      if (err?.response?.status === 409) {
+        try {
+          const existing = await getIntibakTableByApplication(applicationId)
+          navigate(`/intibak/${existing.id}`)
+        } catch {
+          toast.error('Could not load existing intibak table.')
+        }
+      } else {
+        toast.error(extractErrorMessage(err))
+      }
+    } finally {
+      setPreparingIntibak(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex justify-center py-20">
@@ -837,6 +862,14 @@ function EvaluationDetail({
             <span className="text-gray-400 text-xs">{STATUS_LABELS[detail.status] ?? detail.status}</span>
           </div>
         </div>
+        <button
+          onClick={handlePrepareIntibak}
+          disabled={preparingIntibak}
+          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm"
+        >
+          {preparingIntibak ? <Spinner /> : <BookOpen className="w-4 h-4" />}
+          {preparingIntibak ? 'Opening…' : 'Prepare İntibak'}
+        </button>
       </div>
 
       {/* TC-2A: Foreign / Unknown Scale Warning */}

@@ -69,6 +69,17 @@ async def create_intibak_table(
     return {"id": str(table.id), "application_id": str(table.application_id), "status": table.status.value}
 
 
+@router.get("/applications/{application_id}/intibak")
+async def get_intibak_table_by_application(
+    application_id: uuid.UUID,
+    current_user=Depends(_require_ygk),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = IntibakService(db)
+    table = await svc.get_table_by_application(application_id)
+    return _table_response(table)
+
+
 @router.get("/intibak/{table_id}")
 async def get_intibak_table(
     table_id: uuid.UUID,

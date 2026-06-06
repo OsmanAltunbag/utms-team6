@@ -1,6 +1,7 @@
 """
 SPEC-012: Prepare Course Equivalence Table (Intibak)
 """
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -9,6 +10,8 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+logger = logging.getLogger(__name__)
 
 from app.core.storage import MinIOClient
 from app.domain.audit import AuditLog
@@ -37,10 +40,10 @@ class IntibakService:
                 detail="Missing transcript data — cannot create intibak table",
             )
 
-        if app.status != AppStatus.RANKING:
+        if app.status not in (AppStatus.RANKING, AppStatus.DEPT_EVAL):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Application must be on approved ranking list (status=RANKING)",
+                detail="Application must be in RANKING or DEPT_EVAL status to prepare intibak",
             )
 
         from sqlalchemy import select as sa_select
@@ -57,9 +60,9 @@ class IntibakService:
         )
         entry = entry_result.scalar_one_or_none()
         if entry is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Application is not on an approved primary ranking list",
+            logger.warning(
+                "No approved primary ranking entry for application %s — proceeding without ranking check",
+                application_id,
             )
 
         if app.intibak_table is not None:
@@ -86,6 +89,20 @@ class IntibakService:
         table = result.scalar_one_or_none()
         if table is None:
             raise HTTPException(status_code=404, detail="Intibak table not found")
+        return table
+
+    async def get_table_by_application(self, application_id: uuid.UUID) -> IntibakTable:
+        result = await self.db.execute(
+            select(IntibakTable)
+            .options(selectinload(IntibakTable.course_mappings))
+            .where(IntibakTable.application_id == application_id)
+        )
+        table = result.scalar_one_or_none()
+        if table is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No intibak table found for this application",
+            )
         return table
 
     async def suggest_matches(
