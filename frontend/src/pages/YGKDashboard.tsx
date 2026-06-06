@@ -211,8 +211,11 @@ function IntibakApplicationList() {
   const [preparing, setPreparing] = useState<string | null>(null)
 
   useEffect(() => {
-    listYGKApplications()
-      .then(all => setApps(all.filter(a => a.status === 'RANKING' || a.status === 'DEPT_EVAL')))
+    Promise.all([
+      listYGKApplications('RANKING'),
+      listYGKApplications('DEPT_EVAL'),
+    ])
+      .then(([ranking, deptEval]) => setApps([...ranking, ...deptEval]))
       .catch(() => toast.error('Failed to load applications.'))
       .finally(() => setLoading(false))
   }, [])
