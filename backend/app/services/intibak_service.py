@@ -13,6 +13,8 @@ from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
 
+from decimal import Decimal
+
 from app.core.storage import MinIOClient
 from app.domain.audit import AuditLog
 from app.domain.enums import AppStatus, IntibakStatus, RankStatus
@@ -113,10 +115,12 @@ class IntibakService:
         keywords = course_name.lower().split()
         suggestions = []
 
+        from app.domain.application import Application
         result = await self.db.execute(
             select(CourseMapping.target_course, CourseMapping.target_credits)
             .join(IntibakTable)
             .join(IntibakTable.application)
+            .where(Application.program_id == program_id)
             .distinct()
         )
         past_mappings = result.all()
@@ -156,7 +160,6 @@ class IntibakService:
                 detail="equivalence_type must be FULL, PARTIAL, or NONE",
             )
 
-        from decimal import Decimal
         mapping = CourseMapping(
             intibak_table_id=table_id,
             source_course=source_course,
@@ -189,14 +192,28 @@ class IntibakService:
 
         for field_name, value in updates.items():
             if hasattr(mapping, field_name):
+                if field_name in ("source_credits", "target_credits") and value is not None:
+                    value = Decimal(str(value))
                 setattr(mapping, field_name, value)
         await self.db.flush()
         return mapping
 
-    async def save_draft(self, table_id: uuid.UUID) -> IntibakTable:
+    async def delete_mapping(
+        self,
+        table_id: uuid.UUID,
+        mapping_id: uuid.UUID,
+    ) -> None:
         table = await self.get_table(table_id)
+        if not table.is_editable:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot edit submitted intibak table",
+            )
+        mapping = await self.db.get(CourseMapping, mapping_id)
+        if mapping is None or mapping.intibak_table_id != table_id:
+            raise HTTPException(status_code=404, detail="Mapping not found")
+        await self.db.delete(mapping)
         await self.db.flush()
-        return table
 
     async def submit_table(
         self,
@@ -221,6 +238,34 @@ class IntibakService:
             entity_id=table_id,
             old_value={"status": IntibakStatus.DRAFT.value},
             new_value={"status": IntibakStatus.SUBMITTED.value},
+        )
+        self.db.add(log)
+        await self.db.flush()
+
+        return table
+
+    async def approve_table(
+        self,
+        table_id: uuid.UUID,
+        approver_id: uuid.UUID,
+    ) -> IntibakTable:
+        table = await self.get_table(table_id)
+        if table.status != IntibakStatus.SUBMITTED:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Only submitted intibak tables can be approved",
+            )
+        table.status = IntibakStatus.APPROVED
+        table.approved_at = datetime.now(timezone.utc)
+        await self.db.flush()
+
+        log = AuditLog(
+            actor_id=approver_id,
+            action="INTIBAK_APPROVED",
+            entity_type="IntibakTable",
+            entity_id=table_id,
+            old_value={"status": IntibakStatus.SUBMITTED.value},
+            new_value={"status": IntibakStatus.APPROVED.value},
         )
         self.db.add(log)
         await self.db.flush()

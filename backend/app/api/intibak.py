@@ -17,6 +17,7 @@ from app.services.intibak_service import IntibakService
 router = APIRouter()
 
 _require_ygk = require_role(UserRole.TRANSFER_COMMISSION)
+_require_dean = require_role(UserRole.DEAN_OFFICE)
 
 
 class CourseMappingCreate(BaseModel):
@@ -80,17 +81,6 @@ async def get_intibak_table_by_application(
     return _table_response(table)
 
 
-@router.get("/intibak/{table_id}")
-async def get_intibak_table(
-    table_id: uuid.UUID,
-    current_user=Depends(_require_ygk),
-    db: AsyncSession = Depends(get_db),
-):
-    svc = IntibakService(db)
-    table = await svc.get_table(table_id)
-    return _table_response(table)
-
-
 @router.get("/intibak/suggest-match")
 async def suggest_course_match(
     course_name: str,
@@ -101,6 +91,17 @@ async def suggest_course_match(
     svc = IntibakService(db)
     suggestions = await svc.suggest_matches(course_name, program_id)
     return suggestions
+
+
+@router.get("/intibak/{table_id}")
+async def get_intibak_table(
+    table_id: uuid.UUID,
+    current_user=Depends(_require_ygk),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = IntibakService(db)
+    table = await svc.get_table(table_id)
+    return _table_response(table)
 
 
 @router.post("/intibak/{table_id}/mappings", status_code=status.HTTP_201_CREATED)
@@ -142,6 +143,17 @@ async def update_course_mapping(
     return {"id": str(mapping.id), "equivalence_type": mapping.equivalence_type}
 
 
+@router.delete("/intibak/{table_id}/mappings/{mapping_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_course_mapping(
+    table_id: uuid.UUID,
+    mapping_id: uuid.UUID,
+    current_user=Depends(_require_ygk),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = IntibakService(db)
+    await svc.delete_mapping(table_id, mapping_id)
+
+
 @router.post("/intibak/{table_id}/submit")
 async def submit_intibak_table(
     table_id: uuid.UUID,
@@ -151,6 +163,17 @@ async def submit_intibak_table(
     svc = IntibakService(db)
     table = await svc.submit_table(table_id, current_user.id)
     return {"status": table.status.value, "submitted_at": table.submitted_at}
+
+
+@router.post("/intibak/{table_id}/approve")
+async def approve_intibak_table(
+    table_id: uuid.UUID,
+    current_user=Depends(_require_dean),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = IntibakService(db)
+    table = await svc.approve_table(table_id, current_user.id)
+    return {"status": table.status.value, "approved_at": table.approved_at}
 
 
 @router.post("/intibak/{table_id}/parse-transcript")
