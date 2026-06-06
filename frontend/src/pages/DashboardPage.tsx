@@ -1498,15 +1498,35 @@ function PeriodStatusBadge({ period }: { period: ApplicationPeriod }) {
   return <span className="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700">Open</span>
 }
 
+function nowLocalMin() {
+    const now = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`
+}
+
 function CreatePeriodModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [form, setForm] = useState<PeriodCreatePayload>({ label: '', opens_at: '', closes_at: '' })
   const [loading, setLoading] = useState(false)
+  const minDateTime = nowLocalMin()
 
   async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setLoading(true)
+      e.preventDefault()
+      const now = new Date()
+      if (new Date(form.opens_at) < now) {
+          toast.error('Opens At cannot be in the past.')
+          return
+      }
+      if (new Date(form.closes_at) < now) {
+          toast.error('Closes At cannot be in the past.')
+          return
+      }
+      setLoading(true)
     try {
-      await createPeriod(form)
+        await createPeriod({
+            ...form,
+            opens_at: new Date(form.opens_at).toISOString(),
+            closes_at: new Date(form.closes_at).toISOString(),
+        })
       toast.success('Period created.')
       onCreated()
       onClose()
@@ -1540,6 +1560,7 @@ function CreatePeriodModal({ onClose, onCreated }: { onClose: () => void; onCrea
             <input
               type="datetime-local"
               required
+              min={minDateTime}
               value={form.opens_at}
               onChange={e => setForm(f => ({ ...f, opens_at: e.target.value }))}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -1550,6 +1571,7 @@ function CreatePeriodModal({ onClose, onCreated }: { onClose: () => void; onCrea
             <input
               type="datetime-local"
               required
+              min={minDateTime}
               value={form.closes_at}
               onChange={e => setForm(f => ({ ...f, closes_at: e.target.value }))}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -1588,7 +1610,11 @@ function EditPeriodModal({ period, onClose, onUpdated }: { period: ApplicationPe
     e.preventDefault()
     setLoading(true)
     try {
-      await updatePeriod(period.id, { label, opens_at: opensAt, closes_at: closesAt })
+        await updatePeriod(period.id, {
+            label,
+            opens_at: new Date(opensAt).toISOString(),
+            closes_at: new Date(closesAt).toISOString(),
+        })
       toast.success('Period updated.')
       onUpdated()
       onClose()
@@ -1661,7 +1687,7 @@ function ExtendPeriodModal({ period, onClose, onUpdated }: { period: Application
     if (!newClosesAt) return
     setLoading(true)
     try {
-      await extendPeriod(period.id, { new_closes_at: newClosesAt })
+        await extendPeriod(period.id, { new_closes_at: new Date(newClosesAt).toISOString() })
       toast.success('Deadline extended.')
       onUpdated()
       onClose()
