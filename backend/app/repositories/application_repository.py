@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from app.domain.application import Application
 from app.domain.enums import AppStatus
+from app.domain.user import Applicant
 
 
 class ApplicationRepository:
@@ -18,7 +19,7 @@ class ApplicationRepository:
         result = await self.db.execute(
             select(Application)
             .options(
-                selectinload(Application.applicant),
+                selectinload(Application.applicant).selectinload(Applicant.user),
                 selectinload(Application.program),
                 selectinload(Application.period),
                 selectinload(Application.academic_record),

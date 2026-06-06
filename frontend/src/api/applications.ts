@@ -7,6 +7,7 @@ import type {
   Document,
   DocType,
   SubmitResult,
+  NotificationMessage,
 } from '../types/application'
 
 const client = axios.create({
@@ -71,6 +72,13 @@ export async function fetchAcademicData(applicationId: string): Promise<Academic
 
 export async function getApplicationStatus(applicationId: string): Promise<ApplicationStatus> {
   const { data } = await client.get<ApplicationStatus>(`/applications/${applicationId}/status`)
+  return data
+}
+
+export async function listNotifications(applicationId: string): Promise<NotificationMessage[]> {
+  const { data } = await client.get<NotificationMessage[]>(
+    `/applications/${applicationId}/notifications`,
+  )
   return data
 }
 

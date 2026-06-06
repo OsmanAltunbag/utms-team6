@@ -1,6 +1,5 @@
 """
-Celery application instance.
-Full task implementations will be added in SPEC-019.
+Celery application instance — SPEC-020.
 """
 
 from celery import Celery
@@ -20,7 +19,10 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="UTC",
     enable_utc=True,
+    task_acks_late=True,
+    worker_prefetch_multiplier=1,
     task_routes={
         "app.workers.tasks.*": {"queue": "default"},
+        "app.workers.notification_tasks.*": {"queue": "default"},
     },
 )

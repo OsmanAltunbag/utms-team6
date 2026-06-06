@@ -3,6 +3,7 @@ SPEC-006: Student Affairs — Oversee Application Documents
 SPEC-007: Student Affairs — Notify Transfer Results
 """
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import HTTPException, status
@@ -13,9 +14,11 @@ from sqlalchemy.orm import selectinload
 from app.domain.application import Application
 from app.domain.audit import AuditLog
 from app.domain.enums import AppStatus, RankStatus
-from app.domain.ranking import Ranking
+from app.domain.ranking import Ranking, RankingEntry
+from app.domain.user import Applicant
 from app.repositories.application_repository import ApplicationRepository
 from app.services.application_service import ApplicationService
+from app.services.notification_service import NotificationService
 
 
 _VALID_REJECTION_CODES = {
@@ -32,6 +35,7 @@ class OfficerApplicationService:
         self.db = db
         self._app_repo = ApplicationRepository(db)
         self._app_svc = ApplicationService(db)
+        self._notif_svc = NotificationService(db)
 
     async def list_applications(
         self,
@@ -43,7 +47,7 @@ class OfficerApplicationService:
         q = (
             select(App)
             .options(
-                selectinload(App.applicant),
+                selectinload(App.applicant).selectinload(Applicant.user),
                 selectinload(App.program),
                 selectinload(App.period),
                 selectinload(App.documents),
@@ -59,6 +63,12 @@ class OfficerApplicationService:
         result = await self.db.execute(q)
         return list(result.scalars().all())
 
+    async def get_application(self, application_id: uuid.UUID) -> Application:
+        app = await self._app_repo.get_by_id(application_id)
+        if app is None:
+            raise HTTPException(status_code=404, detail="Application not found")
+        return app
+
     async def approve_verification(
         self,
         application_id: uuid.UUID,
@@ -73,6 +83,7 @@ class OfficerApplicationService:
                 detail=f"Expected SUBMITTED, got {app.status.value}",
             )
 
+        old_status = app.status.value
         await self._app_svc.change_status(
             application_id, AppStatus.UNDER_REVIEW, officer_id, "Documents verified"
         )
@@ -82,14 +93,19 @@ class OfficerApplicationService:
             action="DOCUMENT_VERIFIED",
             entity_type="Application",
             entity_id=application_id,
-            old_value={"status": AppStatus.SUBMITTED.value},
+            old_value={"status": old_status},
             new_value={"status": AppStatus.UNDER_REVIEW.value},
         )
         self.db.add(log)
         await self.db.flush()
 
-        self._enqueue_status_notification(app, officer_id, "Belgeleriniz doğrulandı.")
-        return app
+        await self._enqueue_status_notification(
+            app,
+            old_status=old_status,
+            new_status=AppStatus.UNDER_REVIEW.value,
+            note="Belgeleriniz doğrulandı.",
+        )
+        return await self._app_repo.get_by_id(application_id)  # type: ignore[return-value]
 
     async def request_correction(
         self,
@@ -111,6 +127,7 @@ class OfficerApplicationService:
                 detail=f"Expected SUBMITTED, got {app.status.value}",
             )
 
+        old_status = app.status.value
         await self._app_svc.change_status(
             application_id, AppStatus.CORRECTION_REQUESTED, officer_id, note
         )
@@ -120,16 +137,20 @@ class OfficerApplicationService:
             action="CORRECTION_REQUESTED",
             entity_type="Application",
             entity_id=application_id,
-            old_value={"status": AppStatus.SUBMITTED.value},
+            old_value={"status": old_status},
             new_value={"status": AppStatus.CORRECTION_REQUESTED.value, "note": note},
         )
         self.db.add(log)
         await self.db.flush()
 
-        self._enqueue_status_notification(
-            app, officer_id, f"Başvurunuzda düzeltme istendi: {note}"
+        await self._notif_svc.enqueue(
+            user_id=app.applicant_id,
+            subject="UTMS — Düzeltme Talebi",
+            application_id=app.id,
+            template="correction_requested",
+            template_vars={"correction_note": note, "title": "Düzeltme Talebi"},
         )
-        return app
+        return await self._app_repo.get_by_id(application_id)  # type: ignore[return-value]
 
     async def reject_application(
         self,
@@ -146,14 +167,20 @@ class OfficerApplicationService:
         app = await self._app_repo.get_by_id(application_id)
         if app is None:
             raise HTTPException(status_code=404, detail="Application not found")
-        if app.status not in (AppStatus.SUBMITTED, AppStatus.UNDER_REVIEW, AppStatus.CORRECTION_REQUESTED):
+        if app.status not in (
+            AppStatus.SUBMITTED,
+            AppStatus.UNDER_REVIEW,
+            AppStatus.CORRECTION_REQUESTED,
+        ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Cannot reject application in status {app.status.value}",
             )
 
+        old_status = app.status.value
+        rejection_note = f"{reason_code}: {note}" if note else reason_code
         await self._app_svc.change_status(
-            application_id, AppStatus.REJECTED, officer_id, f"{reason_code}: {note}"
+            application_id, AppStatus.REJECTED, officer_id, rejection_note
         )
 
         log = AuditLog(
@@ -161,20 +188,23 @@ class OfficerApplicationService:
             action="APPLICATION_REJECTED",
             entity_type="Application",
             entity_id=application_id,
-            old_value={"status": app.status.value},
-            new_value={"status": AppStatus.REJECTED.value, "reason_code": reason_code, "note": note},
+            old_value={"status": old_status},
+            new_value={
+                "status": AppStatus.REJECTED.value,
+                "reason_code": reason_code,
+                "note": note,
+            },
         )
         self.db.add(log)
         await self.db.flush()
 
-        self._enqueue_status_notification(
-            app, officer_id, f"Başvurunuz reddedildi. Sebep: {reason_code}"
+        await self._enqueue_status_notification(
+            app,
+            old_status=old_status,
+            new_status=AppStatus.REJECTED.value,
+            note=rejection_note,
         )
-        return app
-
-    # ------------------------------------------------------------------
-    # SPEC-007: Publish transfer results
-    # ------------------------------------------------------------------
+        return await self._app_repo.get_by_id(application_id)  # type: ignore[return-value]
 
     async def publish_results(
         self,
@@ -182,10 +212,10 @@ class OfficerApplicationService:
         program_id: uuid.UUID,
         officer_id: uuid.UUID,
     ) -> dict:
-        from app.domain.ranking import Ranking
-
         ranking_result = await self.db.execute(
-            select(Ranking).where(
+            select(Ranking)
+            .options(selectinload(Ranking.entries))
+            .where(
                 Ranking.program_id == program_id,
                 Ranking.period_id == period_id,
             )
@@ -203,6 +233,11 @@ class OfficerApplicationService:
                 detail="Results already published",
             )
 
+        primary_ids = {e.application_id for e in ranking.entries if e.is_primary}
+        waitlisted_ids = {
+            e.application_id for e in ranking.entries if not e.is_primary
+        }
+
         apps_result = await self.db.execute(
             select(Application)
             .options(selectinload(Application.applicant))
@@ -214,33 +249,55 @@ class OfficerApplicationService:
         )
         apps = list(apps_result.scalars().all())
 
-        from datetime import datetime, timezone
-        from app.workers.notification_tasks import send_notification
+        await self.db.execute(
+            update(Application)
+            .where(
+                Application.program_id == program_id,
+                Application.period_id == period_id,
+                Application.status == AppStatus.RANKING,
+            )
+            .values(
+                status=AppStatus.ANNOUNCED,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
 
-        notifications = []
+        period_label = f"{period_id}"
         for app in apps:
-            app.status = AppStatus.ANNOUNCED
-            notif = self._build_notification(app, "Transfer sonuçlarınız açıklandı.")
-            self.db.add(notif)
-            notifications.append(notif)
+            if app.id in primary_ids:
+                result = "Accepted"
+            elif app.id in waitlisted_ids:
+                result = "Waitlisted"
+            else:
+                result = "Rejected"
+            await self._notif_svc.enqueue(
+                user_id=app.applicant_id,
+                subject="UTMS — Transfer Sonuçları Açıklandı",
+                application_id=app.id,
+                template="results_announced",
+                template_vars={
+                    "result": result,
+                    "period_label": period_label,
+                    "title": "Transfer Sonuçları",
+                },
+            )
 
         ranking.published_at = datetime.now(timezone.utc)
-        await self.db.flush()  # assigns IDs to all notifications
+        ranking.status = RankStatus.PUBLISHED
 
         log = AuditLog(
             actor_id=officer_id,
             action="RESULTS_PUBLISHED",
             entity_type="Ranking",
             entity_id=ranking.id,
-            old_value={"published_at": None},
-            new_value={"announced_count": len(apps)},
+            old_value={"published_at": None, "status": RankStatus.APPROVED.value},
+            new_value={
+                "announced_count": len(apps),
+                "status": RankStatus.PUBLISHED.value,
+            },
         )
         self.db.add(log)
         await self.db.flush()
-
-        # Dispatch after flush so IDs are guaranteed — commit follows immediately
-        for notif in notifications:
-            send_notification.delay(str(notif.id))
 
         return {"announced_count": len(apps)}
 
@@ -249,9 +306,6 @@ class OfficerApplicationService:
         period_id: uuid.UUID,
         program_id: uuid.UUID,
     ) -> dict:
-        from app.domain.ranking import Ranking, RankingEntry
-        from app.domain.user import Applicant
-
         ranking_result = await self.db.execute(
             select(Ranking)
             .options(
@@ -273,17 +327,22 @@ class OfficerApplicationService:
         waitlisted = [e for e in ranking.entries if not e.is_primary]
         return {"primary": primary, "waitlisted": waitlisted, "ranking": ranking}
 
-    # ------------------------------------------------------------------
-
-    def _build_notification(self, app: Application, message: str):
-        from app.domain.notification import Notification
-        from app.domain.enums import NotifChannel, NotifStatus
-
-        return Notification(
+    async def _enqueue_status_notification(
+        self,
+        app: Application,
+        old_status: str,
+        new_status: str,
+        note: str,
+    ) -> None:
+        await self._notif_svc.enqueue(
             user_id=app.applicant_id,
-            application_id=app.id,
-            channel=NotifChannel.EMAIL,
             subject="UTMS — Başvuru Durumu Güncellendi",
-            body=message,
-            status=NotifStatus.PENDING,
+            application_id=app.id,
+            template="status_changed",
+            template_vars={
+                "old_status": old_status,
+                "new_status": new_status,
+                "note": note,
+                "title": "Başvuru Durumu Güncellendi",
+            },
         )
