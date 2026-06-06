@@ -12,6 +12,7 @@ from app.api.evaluation import router as evaluation_router
 from app.api.events import router as events_router
 from app.api.intibak import router as intibak_router
 from app.api.programs import router as programs_router
+from app.api.qa import router as qa_router
 from app.api.ranking import router as ranking_router
 from app.api.student_affairs import router as student_affairs_router
 from app.api.ydyo import router as ydyo_router
@@ -45,6 +46,7 @@ app.include_router(documents_router, prefix="/api/documents", tags=["documents"]
 app.include_router(events_router, prefix="/api/applications", tags=["events"])
 app.include_router(programs_router, prefix="/api", tags=["programs"])
 app.include_router(student_affairs_router, prefix="/api/staff", tags=["student-affairs"])
+app.include_router(qa_router, prefix="/api/messages", tags=["messages"])
 app.include_router(evaluation_router, prefix="/api/ygk", tags=["evaluation"])
 app.include_router(ranking_router, prefix="/api/ygk/rankings", tags=["ranking"])
 app.include_router(intibak_router, prefix="/api/ygk", tags=["intibak"])

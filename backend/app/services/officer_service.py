@@ -121,10 +121,10 @@ class OfficerApplicationService:
         app = await self._app_repo.get_by_id(application_id)
         if app is None:
             raise HTTPException(status_code=404, detail="Application not found")
-        if app.status != AppStatus.SUBMITTED:
+        if app.status != AppStatus.UNDER_REVIEW:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Expected SUBMITTED, got {app.status.value}",
+                detail=f"Expected UNDER_REVIEW, got {app.status.value}",
             )
 
         old_status = app.status.value

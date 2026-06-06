@@ -51,6 +51,7 @@ import YGKDashboard from './YGKDashboard'
 import { Sidebar } from '../components/Sidebar'
 import { StatusBadge } from '../components/StatusBadge'
 import Spinner from '../components/Spinner'
+import { ApplicantMessagesPanel, StaffMessagesPanel } from '../components/Messages'
 import type { ApplicationDetail, ApplicationStatus, AcademicRecord, Document, DocType } from '../types/application'
 import { extractErrorMessage } from '../api/auth'
 
@@ -829,6 +830,12 @@ function ApplicantDashboardContent({ userName, onLogout }: { userName: string; o
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {activeTab === 'messages' && (
+            <div className="mt-6">
+              <ApplicantMessagesPanel applicationId={application?.id ?? null} />
             </div>
           )}
 
@@ -1656,7 +1663,7 @@ function StudentAffairsOverview() {
 }
 
 function StudentAffairsDashboardContent({ userName, onLogout }: { userName: string; onLogout: () => void }) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'applications' | 'results'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'applications' | 'results' | 'messages'>('overview')
 
   return (
     <div className="flex flex-1 min-h-screen">
@@ -1664,6 +1671,7 @@ function StudentAffairsDashboardContent({ userName, onLogout }: { userName: stri
         <NavBtn active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} icon={Home} label="Dashboard" />
         <NavBtn active={activeTab === 'applications'} onClick={() => setActiveTab('applications')} icon={Users} label="Applications" />
         <NavBtn active={activeTab === 'results'} onClick={() => setActiveTab('results')} icon={Megaphone} label="Results & Announcement" />
+        <NavBtn active={activeTab === 'messages'} onClick={() => setActiveTab('messages')} icon={Send} label="Messages" />
       </Sidebar>
 
       <div className="flex-1 p-8 bg-gray-50">
@@ -1671,6 +1679,7 @@ function StudentAffairsDashboardContent({ userName, onLogout }: { userName: stri
           {activeTab === 'overview' && <StudentAffairsOverview />}
           {activeTab === 'applications' && <ApplicationsReviewPanel />}
           {activeTab === 'results' && <ResultsAnnouncementPanel />}
+          {activeTab === 'messages' && <StaffMessagesPanel />}
         </div>
       </div>
     </div>
