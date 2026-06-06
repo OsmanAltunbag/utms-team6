@@ -7,6 +7,7 @@ import ResetPasswordPage from './pages/ResetPasswordPage'
 import VerifyEmailPage from './pages/VerifyEmailPage'
 import DashboardPage from './pages/DashboardPage'
 import ChangePasswordPage from './pages/ChangePasswordPage'
+import IntibakPage from './pages/IntibakPage'
 import ProtectedRoute from './components/ProtectedRoute'
 
 export default function App() {
@@ -20,6 +21,14 @@ export default function App() {
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
           <Route path="/change-password" element={<ChangePasswordPage />} />
+          <Route
+            path="/intibak/:tableId"
+            element={
+              <ProtectedRoute>
+                <IntibakPage />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/dashboard"
             element={

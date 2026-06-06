@@ -1,0 +1,637 @@
+import { useState, useEffect } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import toast from 'react-hot-toast'
+import {
+  ArrowLeft, FileText, BookOpen, CheckCircle, RefreshCw,
+  Save, Send, Lightbulb, AlertTriangle,
+} from 'lucide-react'
+import { Sidebar } from '../components/Sidebar'
+import Spinner from '../components/Spinner'
+import { StatusBadge } from '../components/StatusBadge'
+import { extractErrorMessage, logout } from '../api/auth'
+import { useAuth } from '../context/AuthContext'
+import {
+  getIntibakTable,
+  parseTranscript,
+  suggestMatch,
+  addMapping,
+  updateMapping,
+  submitIntibakTable,
+} from '../api/intibak'
+import type {
+  IntibakTable,
+  ParsedCourse,
+  CourseMapping,
+  SuggestedCourse,
+  EquivalenceType,
+} from '../api/intibak'
+import { getEvaluationDetail } from '../api/ygk'
+import type { YGKEvaluationDetail } from '../types/ygk'
+
+// ---------------------------------------------------------------------------
+// Row state
+// ---------------------------------------------------------------------------
+
+interface MappingRowState {
+  mappingId: string | null
+  sourceCourseCode: string
+  sourceCourseName: string
+  sourceCredits: number
+  sourceGrade: string
+  sourceSemester: string
+  targetCourseName: string
+  targetCourseCode: string
+  targetCredits: string
+  equivalenceType: EquivalenceType
+  notes: string
+  saving: boolean
+  saved: boolean
+  suggestions: SuggestedCourse[]
+  showSuggestions: boolean
+}
+
+function mappingToRow(m: CourseMapping): MappingRowState {
+  return {
+    mappingId: m.id,
+    sourceCourseCode: m.source_course_code ?? '',
+    sourceCourseName: m.source_course_name,
+    sourceCredits: m.source_credits,
+    sourceGrade: '',
+    sourceSemester: '',
+    targetCourseName: m.target_course_name ?? '',
+    targetCourseCode: m.target_course_code ?? '',
+    targetCredits: m.target_credits != null ? String(m.target_credits) : '',
+    equivalenceType: m.equivalence_type,
+    notes: m.notes ?? '',
+    saving: false,
+    saved: true,
+    suggestions: [],
+    showSuggestions: false,
+  }
+}
+
+function parsedToRow(c: ParsedCourse): MappingRowState {
+  return {
+    mappingId: null,
+    sourceCourseCode: c.course_code,
+    sourceCourseName: c.course_name,
+    sourceCredits: c.credits,
+    sourceGrade: c.grade,
+    sourceSemester: c.semester,
+    targetCourseName: '',
+    targetCourseCode: '',
+    targetCredits: '',
+    equivalenceType: 'FULL',
+    notes: '',
+    saving: false,
+    saved: false,
+    suggestions: [],
+    showSuggestions: false,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar nav button (matches YGKDashboard pattern)
+// ---------------------------------------------------------------------------
+
+function NavBtn({ active, onClick, icon: Icon, label }: {
+  active: boolean; onClick: () => void; icon: React.ElementType; label: string
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-3 w-full px-4 py-3 rounded-lg text-sm transition-colors ${
+        active ? 'bg-indigo-700 text-white' : 'text-indigo-200 hover:bg-indigo-800 hover:text-white'
+      }`}
+    >
+      <Icon className="w-5 h-5 flex-shrink-0" />
+      {label}
+    </button>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
+
+export default function IntibakPage() {
+  const { tableId } = useParams<{ tableId: string }>()
+  const navigate = useNavigate()
+  const { user } = useAuth()
+
+  const [table, setTable] = useState<IntibakTable | null>(null)
+  const [appDetail, setAppDetail] = useState<YGKEvaluationDetail | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  const [rows, setRows] = useState<MappingRowState[]>([])
+  const [parsedCourses, setParsedCourses] = useState<ParsedCourse[]>([])
+  const [parsing, setParsing] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+
+  async function handleLogout() {
+    try { await logout() } catch { /* ignore */ }
+    navigate('/login')
+  }
+
+  async function loadData() {
+    if (!tableId) return
+    try {
+      const t = await getIntibakTable(tableId)
+      setTable(t)
+      setRows(t.mappings.map(mappingToRow))
+      const detail = await getEvaluationDetail(t.application_id).catch(() => null)
+      if (detail) setAppDetail(detail)
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+      setLoadError(true)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadData() }, [tableId])
+
+  // ---------------------------------------------------------------------------
+  // Handlers
+  // ---------------------------------------------------------------------------
+
+  async function handleParseTranscript() {
+    if (!tableId) return
+    setParsing(true)
+    try {
+      const result = await parseTranscript(tableId)
+      setParsedCourses(result.courses)
+      const existingNames = new Set(rows.map(r => r.sourceCourseName))
+      const existingCodes = new Set(rows.map(r => r.sourceCourseCode).filter(Boolean))
+      const newRows = result.courses
+        .filter(c => !existingNames.has(c.course_name) && !existingCodes.has(c.course_code))
+        .map(parsedToRow)
+      if (newRows.length > 0) setRows(prev => [...prev, ...newRows])
+      toast.success(`Parsed ${result.courses.length} course${result.courses.length !== 1 ? 's' : ''} from transcript.`)
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setParsing(false)
+    }
+  }
+
+  function updateRow(index: number, patch: Partial<MappingRowState>) {
+    setRows(prev => prev.map((r, i) => i === index ? { ...r, ...patch } : r))
+  }
+
+  async function handleSuggest(index: number) {
+    const row = rows[index]
+    if (!row.sourceCourseName) return
+    updateRow(index, { showSuggestions: false, suggestions: [] })
+    try {
+      const suggestions = await suggestMatch(row.sourceCourseName, '')
+      if (suggestions.length === 0) {
+        toast('No suggestions found.', { icon: 'ℹ️' })
+      } else {
+        updateRow(index, { suggestions, showSuggestions: true })
+      }
+    } catch {
+      toast.error('Failed to fetch suggestions.')
+    }
+  }
+
+  function applySuggestion(index: number, s: SuggestedCourse) {
+    updateRow(index, {
+      targetCourseName: s.course_name,
+      targetCourseCode: s.course_code,
+      targetCredits: String(s.credits),
+      showSuggestions: false,
+      suggestions: [],
+      saved: false,
+    })
+  }
+
+  async function handleSaveRow(index: number) {
+    const row = rows[index]
+    updateRow(index, { saving: true })
+    try {
+      if (row.mappingId) {
+        await updateMapping(tableId!, row.mappingId, {
+          target_course_code: row.targetCourseCode || undefined,
+          target_course_name: row.targetCourseName || undefined,
+          target_credits: row.targetCredits ? Number(row.targetCredits) : undefined,
+          equivalence_type: row.equivalenceType,
+          notes: row.notes || undefined,
+        })
+        updateRow(index, { saving: false, saved: true })
+      } else {
+        const mapping = await addMapping(tableId!, {
+          source_course_code: row.sourceCourseCode || undefined,
+          source_course_name: row.sourceCourseName,
+          source_credits: row.sourceCredits,
+          target_course_code: row.targetCourseCode || undefined,
+          target_course_name: row.targetCourseName || undefined,
+          target_credits: row.targetCredits ? Number(row.targetCredits) : undefined,
+          equivalence_type: row.equivalenceType,
+          notes: row.notes || undefined,
+        })
+        updateRow(index, { mappingId: mapping.id, saving: false, saved: true })
+      }
+      toast.success('Mapping saved.')
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+      updateRow(index, { saving: false })
+    }
+  }
+
+  async function handleSubmit() {
+    if (!tableId) return
+    if (!window.confirm('Submit this intibak table? This action cannot be undone.')) return
+    setSubmitting(true)
+    try {
+      const updated = await submitIntibakTable(tableId)
+      setTable(updated)
+      toast.success('Intibak table submitted successfully.', { duration: 6000 })
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Render helpers
+  // ---------------------------------------------------------------------------
+
+  const isSubmitted = table?.status === 'SUBMITTED'
+  const unsavedCount = rows.filter(r => !r.saved).length
+
+  const sidebar = (
+    <Sidebar userName={user?.name ?? ''} role="Transfer Commission" onLogout={handleLogout}>
+      <NavBtn
+        active={false}
+        onClick={() => navigate('/dashboard')}
+        icon={ArrowLeft}
+        label="Back to Dashboard"
+      />
+      <NavBtn
+        active={true}
+        onClick={() => {}}
+        icon={BookOpen}
+        label="Course Equivalence"
+      />
+    </Sidebar>
+  )
+
+  if (loading) {
+    return (
+      <div className="flex flex-1 min-h-screen">
+        {sidebar}
+        <div className="flex-1 flex items-center justify-center bg-gray-50">
+          <Spinner />
+        </div>
+      </div>
+    )
+  }
+
+  if (loadError || !table) {
+    return (
+      <div className="flex flex-1 min-h-screen">
+        {sidebar}
+        <div className="flex-1 flex items-center justify-center bg-gray-50">
+          <div className="text-center">
+            <p className="text-gray-500 text-sm">Failed to load equivalence table.</p>
+            <button
+              onClick={() => navigate('/dashboard')}
+              className="mt-3 text-indigo-600 text-sm hover:underline"
+            >
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-1 min-h-screen">
+      {sidebar}
+
+      <div className="flex-1 p-8 bg-gray-50 overflow-auto">
+        <div className="max-w-6xl mx-auto space-y-6">
+
+          {/* Application info */}
+          <div className="bg-white rounded-lg shadow-sm p-6">
+            <div className="flex items-start justify-between">
+              <div>
+                <h1 className="text-2xl font-semibold text-gray-900">
+                  Course Equivalence (İntibak)
+                </h1>
+                <p className="text-gray-500 text-sm mt-1">
+                  Application:{' '}
+                  <span className="font-mono text-gray-700">{table.application_id}</span>
+                </p>
+                {appDetail && (
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <span className="text-gray-500 text-sm">Status:</span>
+                    <StatusBadge status={appDetail.status} />
+                  </div>
+                )}
+              </div>
+              <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                isSubmitted
+                  ? 'bg-green-100 text-green-700'
+                  : 'bg-yellow-100 text-yellow-700'
+              }`}>
+                Table: {table.status}
+              </span>
+            </div>
+          </div>
+
+          {/* Parse Transcript */}
+          <div className="bg-white rounded-lg shadow-sm p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-indigo-600" />
+                <h2 className="text-base font-semibold text-gray-900">Transcript Analysis</h2>
+              </div>
+              <button
+                onClick={handleParseTranscript}
+                disabled={parsing || isSubmitted}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+              >
+                {parsing ? <Spinner /> : <RefreshCw className="w-4 h-4" />}
+                {parsing ? 'Parsing…' : 'Parse Transcript'}
+              </button>
+            </div>
+
+            {parsedCourses.length === 0 ? (
+              <p className="text-gray-400 text-sm">
+                Click "Parse Transcript" to extract courses from the student's uploaded transcript PDF.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-gray-400 border-b border-gray-100 bg-gray-50">
+                      <th className="px-4 py-3 font-medium">Course Code</th>
+                      <th className="px-4 py-3 font-medium">Course Name</th>
+                      <th className="px-4 py-3 font-medium">Credits</th>
+                      <th className="px-4 py-3 font-medium">Grade</th>
+                      <th className="px-4 py-3 font-medium">Semester</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {parsedCourses.map((c, i) => (
+                      <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
+                        <td className="px-4 py-3 font-mono text-xs text-gray-600">
+                          {c.course_code || '—'}
+                        </td>
+                        <td className="px-4 py-3 text-gray-900">{c.course_name}</td>
+                        <td className="px-4 py-3 text-gray-600">{c.credits}</td>
+                        <td className="px-4 py-3 text-gray-600">{c.grade || '—'}</td>
+                        <td className="px-4 py-3 text-gray-600">{c.semester || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Course Mappings */}
+          <div className="bg-white rounded-lg shadow-sm p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <BookOpen className="w-5 h-5 text-indigo-600" />
+              <h2 className="text-base font-semibold text-gray-900">Course Equivalence Mappings</h2>
+              <span className="ml-auto text-xs text-gray-400">
+                {rows.filter(r => r.saved).length} / {rows.length} saved
+              </span>
+            </div>
+
+            {rows.length === 0 ? (
+              <div className="text-center py-10">
+                <BookOpen className="w-8 h-8 text-gray-200 mx-auto mb-2" />
+                <p className="text-gray-400 text-sm">
+                  No mappings yet. Parse the transcript to begin.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-gray-400 border-b border-gray-100 bg-gray-50">
+                      <th className="px-3 py-3 font-medium min-w-[160px]">Source Course</th>
+                      <th className="px-3 py-3 font-medium w-12 text-center">Cr.</th>
+                      <th className="px-3 py-3 font-medium min-w-[220px]">Target IYTE Course</th>
+                      <th className="px-3 py-3 font-medium w-14 text-center">Cr.</th>
+                      <th className="px-3 py-3 font-medium w-28">Equivalence</th>
+                      <th className="px-3 py-3 font-medium min-w-[140px]">Notes</th>
+                      <th className="px-3 py-3 font-medium w-20">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row, index) => (
+                      <tr key={index} className="border-b border-gray-50 align-top">
+
+                        {/* Source course */}
+                        <td className="px-3 py-3">
+                          <p className="font-medium text-gray-900 leading-tight">
+                            {row.sourceCourseName}
+                          </p>
+                          {row.sourceCourseCode && (
+                            <p className="font-mono text-xs text-gray-400 mt-0.5">
+                              {row.sourceCourseCode}
+                            </p>
+                          )}
+                          {row.sourceGrade && (
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              Grade: {row.sourceGrade}
+                              {row.sourceSemester ? ` · ${row.sourceSemester}` : ''}
+                            </p>
+                          )}
+                        </td>
+
+                        {/* Source credits */}
+                        <td className="px-3 py-3 text-center text-gray-600">
+                          {row.sourceCredits}
+                        </td>
+
+                        {/* Target course */}
+                        <td className="px-3 py-3">
+                          <div className="space-y-1.5">
+                            <input
+                              type="text"
+                              value={row.targetCourseName}
+                              onChange={e =>
+                                updateRow(index, { targetCourseName: e.target.value, saved: false })
+                              }
+                              disabled={isSubmitted}
+                              placeholder="Target course name…"
+                              className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
+                            />
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="text"
+                                value={row.targetCourseCode}
+                                onChange={e =>
+                                  updateRow(index, { targetCourseCode: e.target.value, saved: false })
+                                }
+                                disabled={isSubmitted}
+                                placeholder="Code (opt.)"
+                                className="flex-1 border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
+                              />
+                              {!isSubmitted && (
+                                <button
+                                  onClick={() => handleSuggest(index)}
+                                  title="Suggest matching IYTE course"
+                                  className="flex items-center justify-center p-1.5 text-indigo-500 border border-indigo-200 rounded-lg hover:bg-indigo-50 transition-colors flex-shrink-0"
+                                >
+                                  <Lightbulb className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                            {row.showSuggestions && row.suggestions.length > 0 && (
+                              <div className="border border-gray-200 rounded-lg bg-white shadow-sm overflow-hidden z-10 relative">
+                                {row.suggestions.map((s, si) => (
+                                  <button
+                                    key={si}
+                                    onClick={() => applySuggestion(index, s)}
+                                    className="w-full text-left px-2.5 py-2 text-xs hover:bg-indigo-50 border-b border-gray-50 last:border-0 transition-colors"
+                                  >
+                                    <span className="font-medium text-gray-900">{s.course_name}</span>
+                                    <span className="text-gray-400 ml-1">({s.course_code})</span>
+                                    <span className="text-gray-400 ml-1">· {s.credits} cr.</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Target credits */}
+                        <td className="px-3 py-3">
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={row.targetCredits}
+                            onChange={e =>
+                              updateRow(index, { targetCredits: e.target.value, saved: false })
+                            }
+                            disabled={isSubmitted}
+                            placeholder="0"
+                            className="w-14 border border-gray-300 rounded-lg px-2 py-1.5 text-xs text-center focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
+                          />
+                        </td>
+
+                        {/* Equivalence type */}
+                        <td className="px-3 py-3">
+                          <select
+                            value={row.equivalenceType}
+                            onChange={e =>
+                              updateRow(index, {
+                                equivalenceType: e.target.value as EquivalenceType,
+                                saved: false,
+                              })
+                            }
+                            disabled={isSubmitted}
+                            className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white disabled:bg-gray-50 disabled:text-gray-400"
+                          >
+                            <option value="FULL">FULL</option>
+                            <option value="PARTIAL">PARTIAL</option>
+                            <option value="NONE">NONE</option>
+                          </select>
+                        </td>
+
+                        {/* Notes */}
+                        <td className="px-3 py-3">
+                          <input
+                            type="text"
+                            value={row.notes}
+                            onChange={e =>
+                              updateRow(index, { notes: e.target.value, saved: false })
+                            }
+                            disabled={isSubmitted}
+                            placeholder="Optional notes…"
+                            className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
+                          />
+                        </td>
+
+                        {/* Save button */}
+                        <td className="px-3 py-3">
+                          {isSubmitted ? (
+                            <span className="flex items-center gap-1 text-xs text-green-600 whitespace-nowrap">
+                              <CheckCircle className="w-3.5 h-3.5" />
+                              Submitted
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleSaveRow(index)}
+                              disabled={row.saving}
+                              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-colors disabled:opacity-50 whitespace-nowrap ${
+                                row.saved
+                                  ? 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
+                                  : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                              }`}
+                            >
+                              {row.saving ? (
+                                <Spinner />
+                              ) : row.saved ? (
+                                <CheckCircle className="w-3 h-3" />
+                              ) : (
+                                <Save className="w-3 h-3" />
+                              )}
+                              {row.saved ? 'Saved' : 'Save'}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Submit / Submitted */}
+          {isSubmitted ? (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3">
+              <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-semibold text-green-800">
+                  Equivalence Table Submitted
+                </p>
+                <p className="text-xs text-green-700 mt-0.5">
+                  This intibak table has been finalized and submitted successfully.
+                </p>
+              </div>
+            </div>
+          ) : rows.length > 0 && (
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900">Finalize Equivalence Table</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Once submitted, the table cannot be edited. Ensure all mappings are saved first.
+                  </p>
+                </div>
+                <button
+                  onClick={handleSubmit}
+                  disabled={submitting || unsavedCount > 0}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm"
+                >
+                  {submitting ? <Spinner /> : <Send className="w-4 h-4" />}
+                  {submitting ? 'Submitting…' : 'Submit Table'}
+                </button>
+              </div>
+              {unsavedCount > 0 && (
+                <p className="text-xs text-amber-600 mt-3 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  {unsavedCount} mapping{unsavedCount !== 1 ? 's have' : ' has'} unsaved changes.
+                  Save all rows before submitting.
+                </p>
+              )}
+            </div>
+          )}
+
+        </div>
+      </div>
+    </div>
+  )
+}
