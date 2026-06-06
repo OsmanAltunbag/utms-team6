@@ -74,7 +74,7 @@ class OfficerApplicationService:
             )
 
         await self._app_svc.change_status(
-            application_id, AppStatus.UNDER_REVIEW, officer_id, "Documents verified"
+            application_id, AppStatus.VERIFIED, officer_id, "Documents verified"
         )
 
         log = AuditLog(
@@ -83,7 +83,7 @@ class OfficerApplicationService:
             entity_type="Application",
             entity_id=application_id,
             old_value={"status": AppStatus.SUBMITTED.value},
-            new_value={"status": AppStatus.UNDER_REVIEW.value},
+            new_value={"status": AppStatus.VERIFIED.value},
         )
         self.db.add(log)
         await self.db.flush()
@@ -105,10 +105,10 @@ class OfficerApplicationService:
         app = await self._app_repo.get_by_id(application_id)
         if app is None:
             raise HTTPException(status_code=404, detail="Application not found")
-        if app.status != AppStatus.SUBMITTED:
+        if app.status != AppStatus.UNDER_REVIEW:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Expected SUBMITTED, got {app.status.value}",
+                detail=f"Expected UNDER_REVIEW, got {app.status.value}",
             )
 
         await self._app_svc.change_status(
@@ -120,7 +120,7 @@ class OfficerApplicationService:
             action="CORRECTION_REQUESTED",
             entity_type="Application",
             entity_id=application_id,
-            old_value={"status": AppStatus.SUBMITTED.value},
+            old_value={"status": AppStatus.UNDER_REVIEW.value},
             new_value={"status": AppStatus.CORRECTION_REQUESTED.value, "note": note},
         )
         self.db.add(log)

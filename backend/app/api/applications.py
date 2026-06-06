@@ -151,8 +151,9 @@ async def get_application_status(
 
         # Build pipeline progress
         current_name = application.status.value
-        # CORRECTION_REQUESTED is treated as active at UNDER_REVIEW stage
-        effective = "UNDER_REVIEW" if current_name == "CORRECTION_REQUESTED" else current_name
+        # CORRECTION_REQUESTED and VERIFIED are treated as active at the
+        # UNDER_REVIEW (Document Verification) stage
+        effective = "UNDER_REVIEW" if current_name in ("CORRECTION_REQUESTED", "VERIFIED") else current_name
         try:
             idx = _STAGE_NAMES.index(effective)
         except ValueError:

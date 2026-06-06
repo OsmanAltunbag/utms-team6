@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 # Legal status transitions: maps current status → allowed next statuses
 _TRANSITIONS: dict[AppStatus, set[AppStatus]] = {
     AppStatus.DRAFT: {AppStatus.SUBMITTED},
-    AppStatus.SUBMITTED: {AppStatus.UNDER_REVIEW, AppStatus.REJECTED},
+    AppStatus.SUBMITTED: {AppStatus.VERIFIED, AppStatus.REJECTED},
+    AppStatus.VERIFIED: {AppStatus.UNDER_REVIEW, AppStatus.REJECTED},
     AppStatus.UNDER_REVIEW: {
         AppStatus.ENGLISH_REVIEW,
         AppStatus.CORRECTION_REQUESTED,

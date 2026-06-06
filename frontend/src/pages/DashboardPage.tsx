@@ -33,11 +33,20 @@ import {
   type ProgramOption,
   type PeriodOption,
 } from '../api/applications'
+import {
+  listStaffApplications,
+  getStaffApplication,
+  approveVerification,
+  requestCorrection,
+  rejectApplication,
+  REJECTION_REASON_CODES,
+  type RejectionReasonCode,
+} from '../api/staff'
 import { useAuth } from '../context/AuthContext'
 import { Sidebar } from '../components/Sidebar'
 import { StatusBadge } from '../components/StatusBadge'
 import Spinner from '../components/Spinner'
-import type { ApplicationDetail, ApplicationStatus, AcademicRecord, Document, DocType } from '../types/application'
+import type { ApplicationDetail, ApplicationStatus, ApplicationSummary, AcademicRecord, Document, DocType } from '../types/application'
 import { extractErrorMessage } from '../api/auth'
 
 const ROLE_LABELS: Record<string, string> = {
@@ -853,6 +862,335 @@ function StaffDashboardContent({ userName, roleLabel, icon: Icon, onLogout }: {
           <div className="bg-white rounded-lg shadow-sm p-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">Recent Applications</h2>
             <p className="text-gray-500 text-sm">No applications to review at this time.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Student Affairs Dashboard (UC-03-01 / SPEC-006)
+// ---------------------------------------------------------------------------
+
+const REJECTION_REASON_LABELS: Record<RejectionReasonCode, string> = {
+  INVALID_DOCUMENT: 'Invalid document',
+  FRAUDULENT_DOCUMENT: 'Fraudulent document',
+  DUPLICATE_APPLICATION: 'Duplicate application',
+  MISSED_DEADLINE: 'Missed deadline',
+  OTHER: 'Other',
+}
+
+function StudentAffairsDashboardContent({ userName, onLogout }: { userName: string; onLogout: () => void }) {
+  const [applications, setApplications] = useState<ApplicationSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selected, setSelected] = useState<ApplicationDetail | null>(null)
+  const [loadingDetail, setLoadingDetail] = useState(false)
+  const [action, setAction] = useState<'approve' | 'correction' | 'reject' | null>(null)
+  const [correctionNote, setCorrectionNote] = useState('')
+  const [showReject, setShowReject] = useState(false)
+  const [rejectReason, setRejectReason] = useState<RejectionReasonCode>('INVALID_DOCUMENT')
+  const [rejectNote, setRejectNote] = useState('')
+
+  async function loadApplications() {
+    setLoading(true)
+    try {
+      setApplications(await listStaffApplications())
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadApplications() }, [])
+
+  async function openDetail(id: string) {
+    setLoadingDetail(true)
+    setCorrectionNote('')
+    setShowReject(false)
+    setRejectNote('')
+    setRejectReason('INVALID_DOCUMENT')
+    try {
+      setSelected(await getStaffApplication(id))
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setLoadingDetail(false)
+    }
+  }
+
+  async function afterAction(id: string) {
+    await Promise.all([loadApplications(), openDetail(id)])
+  }
+
+  async function handleApprove() {
+    if (!selected) return
+    setAction('approve')
+    try {
+      await approveVerification(selected.id)
+      toast.success('Verification approved.')
+      await afterAction(selected.id)
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setAction(null)
+    }
+  }
+
+  async function handleRequestCorrection() {
+    if (!selected) return
+    if (!correctionNote.trim()) {
+      toast.error('Please enter a correction note.')
+      return
+    }
+    setAction('correction')
+    try {
+      await requestCorrection(selected.id, correctionNote.trim())
+      toast.success('Correction requested.')
+      await afterAction(selected.id)
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setAction(null)
+    }
+  }
+
+  async function handleReject() {
+    if (!selected) return
+    setAction('reject')
+    try {
+      await rejectApplication(selected.id, rejectReason, rejectNote.trim())
+      toast.success('Application rejected.')
+      await afterAction(selected.id)
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setAction(null)
+    }
+  }
+
+  const pending = applications.filter(a => a.status === 'SUBMITTED').length
+  const verified = applications.filter(a => a.status === 'VERIFIED').length
+  const rejected = applications.filter(a => a.status === 'REJECTED').length
+
+  const canApprove = selected?.status === 'SUBMITTED'
+  const canRequestCorrection = selected?.status === 'UNDER_REVIEW'
+  const canReject = selected != null && ['SUBMITTED', 'UNDER_REVIEW', 'CORRECTION_REQUESTED'].includes(selected.status)
+  const busy = action !== null
+
+  return (
+    <div className="flex flex-1 min-h-screen">
+      <Sidebar userName={userName} role="Student Affairs" onLogout={onLogout}>
+        <NavBtn active={true} onClick={() => {}} icon={Home} label="Dashboard" />
+        <NavBtn active={false} onClick={loadApplications} icon={Users} label="Applications" />
+      </Sidebar>
+
+      <div className="flex-1 p-8 bg-gray-50">
+        <div className="max-w-6xl mx-auto">
+          <div className="flex items-center justify-between mb-8">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
+                <FileText className="w-6 h-6 text-indigo-600" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-semibold text-gray-900">Student Affairs</h1>
+                <p className="text-gray-500 text-sm">Izmir Institute of Technology</p>
+              </div>
+            </div>
+            <button
+              onClick={loadApplications}
+              disabled={loading}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+            >
+              {loading ? <Spinner /> : <RefreshCw className="w-4 h-4" />}
+              Refresh
+            </button>
+          </div>
+
+          {/* Stats */}
+          <div className="grid grid-cols-3 gap-6 mb-8">
+            {[
+              { label: 'Pending Review', value: pending, color: 'text-yellow-600' },
+              { label: 'Verified', value: verified, color: 'text-green-600' },
+              { label: 'Rejected', value: rejected, color: 'text-red-600' },
+            ].map((stat) => (
+              <div key={stat.label} className="bg-white rounded-lg shadow-sm p-6">
+                <p className="text-gray-500 text-sm mb-1">{stat.label}</p>
+                <p className={`text-3xl font-bold ${stat.color}`}>{stat.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Applications list */}
+            <div className="bg-white rounded-lg shadow-sm">
+              <div className="px-6 py-4 border-b border-gray-100">
+                <h2 className="text-base font-semibold text-gray-900">Applications</h2>
+              </div>
+              {loading ? (
+                <div className="flex justify-center py-12"><Spinner /></div>
+              ) : applications.length === 0 ? (
+                <p className="text-gray-400 text-sm text-center py-12">No applications to review at this time.</p>
+              ) : (
+                <div className="divide-y divide-gray-50 max-h-[28rem] overflow-y-auto">
+                  {applications.map(app => (
+                    <button
+                      key={app.id}
+                      onClick={() => openDetail(app.id)}
+                      className={`w-full text-left px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors ${
+                        selected?.id === app.id ? 'bg-indigo-50' : ''
+                      }`}
+                    >
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">
+                          {app.tracking_number ?? `Draft · ${app.id.slice(0, 8)}`}
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          {app.submitted_at
+                            ? `Submitted ${new Date(app.submitted_at).toLocaleDateString()}`
+                            : `Created ${new Date(app.created_at).toLocaleDateString()}`}
+                        </p>
+                      </div>
+                      <StatusBadge status={app.status} />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Detail + actions */}
+            <div className="bg-white rounded-lg shadow-sm">
+              <div className="px-6 py-4 border-b border-gray-100">
+                <h2 className="text-base font-semibold text-gray-900">Application Details</h2>
+              </div>
+              {loadingDetail ? (
+                <div className="flex justify-center py-12"><Spinner /></div>
+              ) : !selected ? (
+                <p className="text-gray-400 text-sm text-center py-12">Select an application to review.</p>
+              ) : (
+                <div className="p-6 space-y-5">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">
+                        {selected.tracking_number ?? 'Not yet submitted'}
+                      </p>
+                      <p className="text-xs text-gray-400 font-mono mt-0.5">{selected.id}</p>
+                    </div>
+                    <StatusBadge status={selected.status} />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div><p className="text-gray-400 text-xs mb-0.5">Created</p><p>{new Date(selected.created_at).toLocaleDateString()}</p></div>
+                    {selected.submitted_at && (
+                      <div><p className="text-gray-400 text-xs mb-0.5">Submitted</p><p>{new Date(selected.submitted_at).toLocaleDateString()}</p></div>
+                    )}
+                  </div>
+
+                  {selected.eligibility_checks.length > 0 && (
+                    <div>
+                      <p className="text-xs text-gray-400 mb-2">Eligibility Checks</p>
+                      <div className="space-y-1">
+                        {selected.eligibility_checks.map((c, i) => (
+                          <div key={i} className="flex items-center justify-between text-sm">
+                            <span className="text-gray-700">{c.rule_key}</span>
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${c.passed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                              {c.passed ? 'Pass' : 'Fail'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div className="border-t border-gray-100 pt-5 space-y-4">
+                    <button
+                      onClick={handleApprove}
+                      disabled={!canApprove || busy}
+                      title={canApprove ? undefined : 'Only SUBMITTED applications can be verified'}
+                      className="flex items-center justify-center gap-2 w-full px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+                    >
+                      {action === 'approve' ? <Spinner /> : <CheckCircle className="w-4 h-4" />}
+                      Approve Verification
+                    </button>
+
+                    {/* Request correction */}
+                    <div className="space-y-2">
+                      <textarea
+                        value={correctionNote}
+                        onChange={e => setCorrectionNote(e.target.value)}
+                        disabled={!canRequestCorrection || busy}
+                        rows={2}
+                        placeholder="Correction note for the applicant…"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50 disabled:opacity-60"
+                      />
+                      <button
+                        onClick={handleRequestCorrection}
+                        disabled={!canRequestCorrection || busy}
+                        title={canRequestCorrection ? undefined : 'Only UNDER_REVIEW applications can be sent for correction'}
+                        className="flex items-center justify-center gap-2 w-full px-4 py-2 bg-yellow-500 text-white text-sm rounded-lg hover:bg-yellow-600 disabled:opacity-50 transition-colors"
+                      >
+                        {action === 'correction' ? <Spinner /> : <Send className="w-4 h-4" />}
+                        Request Correction
+                      </button>
+                    </div>
+
+                    {/* Reject */}
+                    {!showReject ? (
+                      <button
+                        onClick={() => setShowReject(true)}
+                        disabled={!canReject || busy}
+                        title={canReject ? undefined : 'This application cannot be rejected in its current status'}
+                        className="flex items-center justify-center gap-2 w-full px-4 py-2 border border-red-300 text-red-600 text-sm rounded-lg hover:bg-red-50 disabled:opacity-50 transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                        Reject Application
+                      </button>
+                    ) : (
+                      <div className="space-y-2 rounded-lg border border-red-200 bg-red-50 p-3">
+                        <p className="text-xs font-medium text-red-700">Reject Application</p>
+                        <select
+                          value={rejectReason}
+                          onChange={e => setRejectReason(e.target.value as RejectionReasonCode)}
+                          disabled={busy}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
+                        >
+                          {REJECTION_REASON_CODES.map(code => (
+                            <option key={code} value={code}>{REJECTION_REASON_LABELS[code]}</option>
+                          ))}
+                        </select>
+                        <textarea
+                          value={rejectNote}
+                          onChange={e => setRejectNote(e.target.value)}
+                          disabled={busy}
+                          rows={2}
+                          placeholder="Reason note (optional)…"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleReject}
+                            disabled={busy}
+                            className="flex items-center justify-center gap-2 flex-1 px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
+                          >
+                            {action === 'reject' ? <Spinner /> : <X className="w-4 h-4" />}
+                            Confirm Reject
+                          </button>
+                          <button
+                            onClick={() => setShowReject(false)}
+                            disabled={busy}
+                            className="px-4 py-2 border border-gray-300 text-sm rounded-lg hover:bg-gray-100 disabled:opacity-50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -1912,7 +2250,7 @@ export default function DashboardPage() {
     case 'APPLICANT':
       return <ApplicantDashboardContent userName={displayName} onLogout={handleLogout} />
     case 'STUDENT_AFFAIRS':
-      return <StaffDashboardContent userName={displayName} roleLabel="Student Affairs" icon={FileText} onLogout={handleLogout} />
+      return <StudentAffairsDashboardContent userName={displayName} onLogout={handleLogout} />
     case 'TRANSFER_COMMISSION':
       return <StaffDashboardContent userName={displayName} roleLabel="Transfer Commission" icon={Users} onLogout={handleLogout} />
     case 'YDYO':

@@ -108,7 +108,7 @@ class Application(Base):
 
     def get_progress(self) -> dict:
         """Return a structured progress summary for this application."""
-        if self.status == AppStatus.CORRECTION_REQUESTED:
+        if self.status in (AppStatus.CORRECTION_REQUESTED, AppStatus.VERIFIED):
             current_index = _STATUS_ORDER.index(AppStatus.UNDER_REVIEW)
         elif self.status in _STATUS_ORDER:
             current_index = _STATUS_ORDER.index(self.status)

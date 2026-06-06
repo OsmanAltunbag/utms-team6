@@ -1,6 +1,7 @@
 export type AppStatus =
   | 'DRAFT'
   | 'SUBMITTED'
+  | 'VERIFIED'
   | 'UNDER_REVIEW'
   | 'ENGLISH_REVIEW'
   | 'DEPT_EVAL'

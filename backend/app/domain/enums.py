@@ -15,6 +15,7 @@ class UserRole(str, enum.Enum):
 class AppStatus(str, enum.Enum):
     DRAFT = "DRAFT"
     SUBMITTED = "SUBMITTED"
+    VERIFIED = "VERIFIED"
     UNDER_REVIEW = "UNDER_REVIEW"
     ENGLISH_REVIEW = "ENGLISH_REVIEW"
     DEPT_EVAL = "DEPT_EVAL"
