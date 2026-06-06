@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, type NavigateFunction } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import {
   Home, ClipboardList, ArrowLeft, Eye, CheckCircle, XCircle,
@@ -74,6 +74,28 @@ const DOC_TYPE_LABELS: Record<string, string> = {
   MILITARY_STATUS: 'Military Status',
   DISCIPLINE_RECORD: 'Discipline Record',
   OTHER: 'Other',
+}
+
+// Shared helper — creates or fetches the existing intibak table then navigates.
+async function openIntibakTable(
+  applicationId: string,
+  navigate: NavigateFunction,
+) {
+  try {
+    const table = await createIntibakTable(applicationId)
+    navigate(`/intibak/${table.id}`)
+  } catch (err: any) {
+    if (err?.response?.status === 409) {
+      try {
+        const existing = await getIntibakTableByApplication(applicationId)
+        navigate(`/intibak/${existing.id}`)
+      } catch {
+        toast.error('Could not load existing intibak table.')
+      }
+    } else {
+      toast.error(extractErrorMessage(err))
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +177,100 @@ function ApplicationList({
                     >
                       <Eye className="w-3 h-3" />
                       Evaluate
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// İntibak Application List
+// ---------------------------------------------------------------------------
+
+function IntibakApplicationList() {
+  const navigate = useNavigate()
+  const [apps, setApps] = useState<YGKApplicationSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [preparing, setPreparing] = useState<string | null>(null)
+
+  useEffect(() => {
+    listYGKApplications()
+      .then(all => setApps(all.filter(a => a.status === 'RANKING' || a.status === 'DEPT_EVAL')))
+      .catch(() => toast.error('Failed to load applications.'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  async function handlePrepare(applicationId: string) {
+    setPreparing(applicationId)
+    await openIntibakTable(applicationId, navigate)
+    setPreparing(null)
+  }
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-16">
+        <Spinner />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold text-gray-900">Course Equivalence (İntibak)</h1>
+        <p className="text-gray-500 text-sm mt-1">
+          Applications eligible for intibak table preparation
+        </p>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+        {apps.length === 0 ? (
+          <div className="text-center py-16">
+            <BookOpen className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+            <p className="text-gray-500 text-sm">
+              No applications in RANKING or DEPT_EVAL status.
+            </p>
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-gray-400 border-b border-gray-100 bg-gray-50">
+                <th className="px-6 py-3 font-medium">Tracking No.</th>
+                <th className="px-6 py-3 font-medium">Applicant</th>
+                <th className="px-6 py-3 font-medium">Program</th>
+                <th className="px-6 py-3 font-medium">Status</th>
+                <th className="px-6 py-3 font-medium">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {apps.map((app) => (
+                <tr key={app.id} className="border-b border-gray-50 hover:bg-indigo-50 transition-colors">
+                  <td className="px-6 py-4 font-mono text-xs text-gray-600">
+                    {app.tracking_number || '—'}
+                  </td>
+                  <td className="px-6 py-4 font-medium text-gray-900">
+                    {app.applicant || 'Unknown'}
+                  </td>
+                  <td className="px-6 py-4 text-gray-600">
+                    {app.program || '—'}
+                  </td>
+                  <td className="px-6 py-4">
+                    <StatusBadge status={app.status} />
+                  </td>
+                  <td className="px-6 py-4">
+                    <button
+                      onClick={() => handlePrepare(app.id)}
+                      disabled={preparing === app.id}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                    >
+                      {preparing === app.id ? <Spinner /> : <BookOpen className="w-3 h-3" />}
+                      {preparing === app.id ? 'Opening…' : 'Prepare İntibak'}
                     </button>
                   </td>
                 </tr>
@@ -787,23 +903,8 @@ function EvaluationDetail({
 
   async function handlePrepareIntibak() {
     setPreparingIntibak(true)
-    try {
-      const table = await createIntibakTable(applicationId)
-      navigate(`/intibak/${table.id}`)
-    } catch (err: any) {
-      if (err?.response?.status === 409) {
-        try {
-          const existing = await getIntibakTableByApplication(applicationId)
-          navigate(`/intibak/${existing.id}`)
-        } catch {
-          toast.error('Could not load existing intibak table.')
-        }
-      } else {
-        toast.error(extractErrorMessage(err))
-      }
-    } finally {
-      setPreparingIntibak(false)
-    }
+    await openIntibakTable(applicationId, navigate)
+    setPreparingIntibak(false)
   }
 
   if (loading) {
@@ -1126,7 +1227,7 @@ export default function YGKDashboard({
   userName: string
   onLogout: () => void
 }) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'pending'>('pending')
+  const [activeTab, setActiveTab] = useState<'overview' | 'pending' | 'intibak'>('pending')
   const [selected, setSelected] = useState<YGKApplicationSummary | null>(null)
 
   return (
@@ -1143,6 +1244,12 @@ export default function YGKDashboard({
           onClick={() => { setActiveTab('pending'); setSelected(null) }}
           icon={ClipboardList}
           label="Pending Evaluation"
+        />
+        <NavBtn
+          active={activeTab === 'intibak' && !selected}
+          onClick={() => { setActiveTab('intibak'); setSelected(null) }}
+          icon={BookOpen}
+          label="İntibak"
         />
       </Sidebar>
 
@@ -1181,6 +1288,11 @@ export default function YGKDashboard({
           {/* Pending evaluation list */}
           {!selected && activeTab === 'pending' && (
             <ApplicationList onSelect={setSelected} />
+          )}
+
+          {/* İntibak tab */}
+          {!selected && activeTab === 'intibak' && (
+            <IntibakApplicationList />
           )}
 
         </div>
