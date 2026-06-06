@@ -117,7 +117,7 @@ function NavBtn({ active, onClick, icon: Icon, label }: {
 export default function IntibakPage() {
   const { tableId } = useParams<{ tableId: string }>()
   const navigate = useNavigate()
-  const { user } = useAuth()
+  const { userName } = useAuth()
 
   const [table, setTable] = useState<IntibakTable | null>(null)
   const [appDetail, setAppDetail] = useState<YGKEvaluationDetail | null>(null)
@@ -262,7 +262,7 @@ export default function IntibakPage() {
   const unsavedCount = rows.filter(r => !r.saved).length
 
   const sidebar = (
-    <Sidebar userName={user?.name ?? ''} role="Transfer Commission" onLogout={handleLogout}>
+    <Sidebar userName={userName ?? ''} role="Transfer Commission" onLogout={handleLogout}>
       <NavBtn
         active={false}
         onClick={() => navigate('/dashboard')}
