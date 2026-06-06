@@ -39,9 +39,10 @@ class Settings(BaseSettings):
     APP_BASE_URL: str = "http://localhost:5173"
     FRONTEND_URL: str = "http://localhost:5173"
 
-    # Email (Gmail SMTP with App Password)
-    SMTP_SERVER: str = "smtp.gmail.com"
-    SMTP_PORT: int = 587
+    # Email — Mailpit in local dev; Gmail SMTP in production
+    SMTP_SERVER: str = "mailpit"
+    SMTP_PORT: int = 1025
+    SMTP_USE_TLS: bool = False
     SMTP_USERNAME: str = ""
     SMTP_PASSWORD: str = ""
     FROM_EMAIL: str = "UTMS <noreply@iyte.edu.tr>"

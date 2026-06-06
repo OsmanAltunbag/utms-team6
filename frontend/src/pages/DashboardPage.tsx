@@ -38,6 +38,7 @@ import {
   getResults, publishResults,
   listStaffApplications, getStaffApplication,
   approveVerification, requestCorrection, rejectStaffApplication,
+  announceApplication,
 } from '../api/staff'
 import type {
   ResultsResponse, ApplicantResult,
@@ -48,6 +49,8 @@ import { listNotifications } from '../api/applications'
 import type { NotificationMessage } from '../types/application'
 import { useAuth } from '../context/AuthContext'
 import YGKDashboard from './YGKDashboard'
+import YDYODashboard from './YDYODashboard'
+import DeanDashboard from './DeanDashboard'
 import { Sidebar } from '../components/Sidebar'
 import { StatusBadge } from '../components/StatusBadge'
 import Spinner from '../components/Spinner'
@@ -1600,11 +1603,109 @@ function ApplicationsReviewPanel() {
 }
 
 // ---------------------------------------------------------------------------
+// Dean-approved applications awaiting SA announcement
+// ---------------------------------------------------------------------------
+
+function DeanApprovalQueuePanel() {
+  const [apps, setApps] = useState<StaffApplicationSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [announcingId, setAnnouncingId] = useState<string | null>(null)
+
+  async function loadQueue() {
+    setLoading(true)
+    try {
+      const data = await listStaffApplications({ status: 'DEAN_APPROVED' })
+      setApps(data)
+    } catch {
+      toast.error('Failed to load dean-approved applications.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadQueue() }, [])
+
+  async function handleAnnounce(id: string, name: string) {
+    setAnnouncingId(id)
+    try {
+      await announceApplication(id)
+      toast.success(`${name} — transfer result announced. Applicant notified.`)
+      await loadQueue()
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setAnnouncingId(null)
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold text-gray-900">Announcement Queue</h1>
+        <p className="text-gray-500 text-sm mt-1">
+          Applications the Dean has approved. Publish the official transfer result to notify each applicant.
+        </p>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-gray-900">
+            Awaiting Announcement ({apps.length})
+          </h2>
+          <button
+            onClick={loadQueue}
+            disabled={loading}
+            className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="flex justify-center py-16"><Spinner /></div>
+        ) : apps.length === 0 ? (
+          <div className="text-center py-16">
+            <Megaphone className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+            <p className="text-gray-500 text-sm">No dean-approved applications waiting for announcement.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-50">
+            {apps.map(app => {
+              const name = app.applicant_name ?? app.tracking_number ?? 'Applicant'
+              return (
+                <div key={app.id} className="px-6 py-4 flex items-center justify-between gap-4 flex-wrap">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{name}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">{app.tracking_number} · {app.applicant_email}</p>
+                    <div className="mt-1.5">
+                      <StatusBadge status={app.status} />
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleAnnounce(app.id, name)}
+                    disabled={announcingId === app.id}
+                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                  >
+                    {announcingId === app.id ? <Spinner /> : <Megaphone className="w-4 h-4" />}
+                    {announcingId === app.id ? 'Announcing…' : 'Announce Result'}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // UC-03-02: Student Affairs Dashboard
 // ---------------------------------------------------------------------------
 
 function StudentAffairsOverview() {
-  const [stats, setStats] = useState({ pending: 0, approved: 0, rejected: 0 })
+  const [stats, setStats] = useState({ pending: 0, underReview: 0, awaitingAnnouncement: 0, rejected: 0 })
   const [recent, setRecent] = useState<StaffApplicationSummary[]>([])
 
   useEffect(() => {
@@ -1612,7 +1713,8 @@ function StudentAffairsOverview() {
       .then(all => {
         setStats({
           pending: all.filter(a => a.status === 'SUBMITTED').length,
-          approved: all.filter(a => a.status === 'UNDER_REVIEW').length,
+          underReview: all.filter(a => a.status === 'UNDER_REVIEW').length,
+          awaitingAnnouncement: all.filter(a => a.status === 'DEAN_APPROVED').length,
           rejected: all.filter(a => a.status === 'REJECTED').length,
         })
         setRecent(all.slice(0, 5))
@@ -1631,10 +1733,11 @@ function StudentAffairsOverview() {
           <p className="text-gray-500 text-sm">Izmir Institute of Technology</p>
         </div>
       </div>
-      <div className="grid grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 mb-8">
         {[
           { label: 'Pending Review', value: stats.pending, color: 'text-yellow-600' },
-          { label: 'Under Review', value: stats.approved, color: 'text-green-600' },
+          { label: 'Under Review', value: stats.underReview, color: 'text-blue-600' },
+          { label: 'Awaiting Announcement', value: stats.awaitingAnnouncement, color: 'text-emerald-600' },
           { label: 'Rejected', value: stats.rejected, color: 'text-red-600' },
         ].map(s => (
           <div key={s.label} className="bg-white rounded-lg shadow-sm p-6">
@@ -1663,13 +1766,14 @@ function StudentAffairsOverview() {
 }
 
 function StudentAffairsDashboardContent({ userName, onLogout }: { userName: string; onLogout: () => void }) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'applications' | 'results' | 'messages'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'applications' | 'announcement' | 'results' | 'messages'>('overview')
 
   return (
     <div className="flex flex-1 min-h-screen">
       <Sidebar userName={userName} role="Student Affairs" onLogout={onLogout}>
         <NavBtn active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} icon={Home} label="Dashboard" />
         <NavBtn active={activeTab === 'applications'} onClick={() => setActiveTab('applications')} icon={Users} label="Applications" />
+        <NavBtn active={activeTab === 'announcement'} onClick={() => setActiveTab('announcement')} icon={UserCheck} label="Announcement Queue" />
         <NavBtn active={activeTab === 'results'} onClick={() => setActiveTab('results')} icon={Megaphone} label="Results & Announcement" />
         <NavBtn active={activeTab === 'messages'} onClick={() => setActiveTab('messages')} icon={Send} label="Messages" />
       </Sidebar>
@@ -1678,6 +1782,7 @@ function StudentAffairsDashboardContent({ userName, onLogout }: { userName: stri
         <div className="max-w-6xl mx-auto">
           {activeTab === 'overview' && <StudentAffairsOverview />}
           {activeTab === 'applications' && <ApplicationsReviewPanel />}
+          {activeTab === 'announcement' && <DeanApprovalQueuePanel />}
           {activeTab === 'results' && <ResultsAnnouncementPanel />}
           {activeTab === 'messages' && <StaffMessagesPanel />}
         </div>
@@ -2833,9 +2938,9 @@ export default function DashboardPage() {
     case 'TRANSFER_COMMISSION':
       return <YGKDashboard userName={displayName} onLogout={handleLogout} />
     case 'YDYO':
-      return <StaffDashboardContent userName={displayName} roleLabel="Foreign Languages Office" icon={CheckCircle} onLogout={handleLogout} />
+      return <YDYODashboard userName={displayName} onLogout={handleLogout} />
     case 'DEAN_OFFICE':
-      return <StaffDashboardContent userName={displayName} roleLabel="Dean's Office" icon={BarChart2} onLogout={handleLogout} />
+      return <DeanDashboard userName={displayName} onLogout={handleLogout} />
     case 'SYSTEM_ADMIN':
       return <AdminDashboardContent userName={displayName} onLogout={handleLogout} />
     default:

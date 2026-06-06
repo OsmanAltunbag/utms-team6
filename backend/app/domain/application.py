@@ -30,6 +30,7 @@ _STATUS_ORDER = [
     AppStatus.ENGLISH_REVIEW,
     AppStatus.DEPT_EVAL,
     AppStatus.RANKING,
+    AppStatus.DEAN_APPROVED,
     AppStatus.ANNOUNCED,
 ]
 

@@ -52,9 +52,21 @@ class NotificationService:
     @staticmethod
     def display_message(body: str) -> str:
         """Human-readable message for API responses (strips template JSON)."""
-        _, _, plain = parse_notification_body(body)
+        template_name, variables, plain = parse_notification_body(body)
         if plain:
             return plain
+        if template_name == "dean_decision":
+            decision = variables.get("decision", "Decision")
+            next_steps = variables.get("next_steps", "")
+            return f"{decision}. {next_steps}".strip()
+        if variables.get("correction_note"):
+            return str(variables["correction_note"])
+        if variables.get("note"):
+            return str(variables["note"])
+        if variables.get("result"):
+            return f"Result: {variables['result']}"
+        if variables.get("decision"):
+            return str(variables["decision"])
         try:
             import json
             data = json.loads(body)

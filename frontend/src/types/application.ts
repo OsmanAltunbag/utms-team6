@@ -5,6 +5,7 @@ export type AppStatus =
   | 'ENGLISH_REVIEW'
   | 'DEPT_EVAL'
   | 'RANKING'
+  | 'DEAN_APPROVED'
   | 'ANNOUNCED'
   | 'REJECTED'
   | 'CORRECTION_REQUESTED'

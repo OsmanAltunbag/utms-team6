@@ -44,6 +44,7 @@ _PIPELINE_STAGES = [
     {"name": "ENGLISH_REVIEW", "label_tr": "İngilizce Yeterliliği", "label_en": "English Proficiency"},
     {"name": "DEPT_EVAL",      "label_tr": "Bölüm Değerlendirmesi", "label_en": "Department Evaluation"},
     {"name": "RANKING",        "label_tr": "Sıralama",              "label_en": "Ranking"},
+    {"name": "DEAN_APPROVED",  "label_tr": "Dekanlık Onayı",        "label_en": "Dean's Approval"},
     {"name": "ANNOUNCED",      "label_tr": "Sonuç Açıklandı",       "label_en": "Result Announced"},
 ]
 _STAGE_NAMES = [s["name"] for s in _PIPELINE_STAGES]
@@ -174,15 +175,50 @@ async def get_application_status(
         # Fetch audit history
         audit_repo = AuditLogRepository(db)
         logs = await audit_repo.get_status_history(application_id)
-        history = [
-            HistoryEntry(
-                status=log.new_value.get("status", "") if log.new_value else "",
-                changed_at=log.created_at,
-                changed_by_role=log.actor.role.value if log.actor else None,
-                note=log.new_value.get("note") if log.new_value else None,
-            )
+        skip_dean_approved = any(
+            log.action == "STATUS_CHANGED"
+            and (log.new_value or {}).get("status") == AppStatus.DEAN_APPROVED.value
             for log in logs
-        ]
+        )
+        skip_dean_rejected = any(
+            log.action == "STATUS_CHANGED"
+            and (log.new_value or {}).get("status") == AppStatus.REJECTED.value
+            for log in logs
+        )
+        history = []
+        for log in logs:
+            if log.action == "DEAN_FINAL_APPROVED" and skip_dean_approved:
+                continue
+            if log.action == "DEAN_FINAL_REJECTED" and skip_dean_rejected:
+                continue
+            new_val = log.new_value or {}
+            status_label = new_val.get("status", "")
+            note = new_val.get("note")
+            if log.action == "DEAN_FINAL_APPROVED":
+                status_label = status_label or "DEAN_APPROVED"
+                note = note or "Dean's final approval — routed to Student Affairs"
+            elif log.action == "DEAN_FINAL_REJECTED":
+                status_label = "REJECTED"
+                note = new_val.get("rejection_reason") or note
+                if new_val.get("note"):
+                    note = f"{note} ({new_val['note']})" if note else new_val["note"]
+            elif log.action == "ENGLISH_APPROVED":
+                status_label = status_label or "ENGLISH_REVIEW"
+                note = note or "English proficiency approved"
+            elif log.action == "ENGLISH_ROUTED_TO_EXAM":
+                status_label = "ENGLISH_REVIEW"
+                note = note or new_val.get("notes", "Routed to YDYO proficiency exam")
+            elif log.action == "RESULT_ANNOUNCED":
+                status_label = "ANNOUNCED"
+                note = note or "Transfer result announced by Student Affairs"
+            history.append(
+                HistoryEntry(
+                    status=status_label,
+                    changed_at=log.created_at,
+                    changed_by_role=log.actor.role.value if log.actor else None,
+                    note=note,
+                )
+            )
 
         # Build result for terminal states
         result: Optional[ResultOut] = None

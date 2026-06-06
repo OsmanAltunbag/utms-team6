@@ -4,6 +4,15 @@ export interface TokenResponse {
   must_change_password: boolean
 }
 
+export interface MeResponse {
+  id: string
+  email: string
+  role: string
+  first_name: string
+  last_name: string
+  must_change_password: boolean
+}
+
 export interface ApiError {
   detail: string | ValidationError[]
 }

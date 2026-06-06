@@ -86,6 +86,15 @@ export async function rejectStaffApplication(
   return data
 }
 
+export async function announceApplication(
+  applicationId: string,
+): Promise<{ id: string; status: string; message: string }> {
+  const { data } = await client.post<{ id: string; status: string; message: string }>(
+    `/applications/${applicationId}/announce`,
+  )
+  return data
+}
+
 // ---------------------------------------------------------------------------
 // SPEC-007: Results publication
 // ---------------------------------------------------------------------------

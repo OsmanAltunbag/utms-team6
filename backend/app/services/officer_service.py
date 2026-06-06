@@ -206,6 +206,53 @@ class OfficerApplicationService:
         )
         return await self._app_repo.get_by_id(application_id)  # type: ignore[return-value]
 
+    async def announce_application(
+        self,
+        application_id: uuid.UUID,
+        officer_id: uuid.UUID,
+    ) -> Application:
+        """Publish the final result for a single dean-approved application."""
+        app = await self._app_repo.get_by_id(application_id)
+        if app is None:
+            raise HTTPException(status_code=404, detail="Application not found")
+        if app.status != AppStatus.DEAN_APPROVED:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Expected DEAN_APPROVED, got {app.status.value}",
+            )
+
+        old_status = app.status.value
+        await self._app_svc.change_status(
+            application_id,
+            AppStatus.ANNOUNCED,
+            officer_id,
+            "Transfer result announced by Student Affairs",
+        )
+
+        log = AuditLog(
+            actor_id=officer_id,
+            action="RESULT_ANNOUNCED",
+            entity_type="Application",
+            entity_id=application_id,
+            old_value={"status": old_status},
+            new_value={"status": AppStatus.ANNOUNCED.value},
+        )
+        self.db.add(log)
+        await self.db.flush()
+
+        await self._notif_svc.enqueue(
+            user_id=app.applicant_id,
+            subject="UTMS — Transfer Sonucu İlan Edildi",
+            application_id=app.id,
+            template="result_announced",
+            template_vars={
+                "title": "Transfer Sonucu",
+                "decision": "Kabul Edildi",
+                "next_steps": "Tebrikler! Transfer başvurunuz resmi olarak ilan edildi.",
+            },
+        )
+        return await self._app_repo.get_by_id(application_id)  # type: ignore[return-value]
+
     async def publish_results(
         self,
         period_id: uuid.UUID,

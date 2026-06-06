@@ -10,6 +10,7 @@ from app.schemas.auth import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     LoginRequest,
+    MeResponse,
     RegistrationRequest,
     ResetPasswordRequest,
     TokenResponse,
@@ -84,6 +85,19 @@ async def logout(
     service = AuthService(db)
     await service.logout(current_user.id, jti, ip)
     _clear_auth_cookies(response)
+
+
+@router.get("/me", response_model=MeResponse)
+async def me(current_user: User = Depends(get_current_user)) -> MeResponse:
+    """Return the authenticated user's live role from the database."""
+    return MeResponse(
+        id=str(current_user.id),
+        email=current_user.email,
+        role=current_user.role.value,
+        first_name=current_user.first_name,
+        last_name=current_user.last_name,
+        must_change_password=current_user.must_change_password,
+    )
 
 
 @router.post("/refresh", response_model=TokenResponse)

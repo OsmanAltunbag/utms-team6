@@ -25,20 +25,21 @@ def _get_sync_session() -> Session:
 
 
 def _smtp_send(to_address: str, subject: str, html_body: str) -> None:
-    if not settings.SMTP_USERNAME or not settings.SMTP_PASSWORD:
-        raise RuntimeError("SMTP credentials are not configured")
-
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = settings.FROM_EMAIL
     msg["To"] = to_address
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-    password = settings.SMTP_PASSWORD.replace(" ", "")
     with smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT, timeout=30) as smtp:
         smtp.ehlo()
-        smtp.starttls()
-        smtp.login(settings.SMTP_USERNAME, password)
+        if settings.SMTP_USE_TLS:
+            smtp.starttls()
+            smtp.ehlo()
+        # Mailpit (local dev) uses plain SMTP without AUTH; Gmail requires TLS + login.
+        if settings.SMTP_USE_TLS and settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
+            password = settings.SMTP_PASSWORD.replace(" ", "")
+            smtp.login(settings.SMTP_USERNAME, password)
         smtp.sendmail(settings.FROM_EMAIL, [to_address], msg.as_string())
 
 
@@ -83,12 +84,21 @@ def send_notification(self, notification_id: str) -> None:
         subject = notif.subject or "UTMS Bildirimi"
         html_body = _render_html(subject, notif.body)
 
-        _smtp_send(to_address, subject, html_body)
+        if not settings.SMTP_USERNAME or not settings.SMTP_PASSWORD:
+            # Local dev: no SMTP — deliver in-app only, mark as sent so the
+            # applicant Messages tab shows a completed notification.
+            logger.warning(
+                "SMTP not configured — notification %s recorded for %s (email skipped)",
+                notification_id,
+                to_address,
+            )
+        else:
+            _smtp_send(to_address, subject, html_body)
+            logger.info("Notification %s emailed to %s", notification_id, to_address)
 
         notif.status = NotifStatus.SENT
         notif.sent_at = datetime.now(timezone.utc)
         session.commit()
-        logger.info("Notification %s sent to %s", notification_id, to_address)
 
     except Exception as exc:
         session.rollback()

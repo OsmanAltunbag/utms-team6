@@ -25,6 +25,10 @@ class ApplicationRepository:
                 selectinload(Application.academic_record),
                 selectinload(Application.documents),
                 selectinload(Application.eligibility_checks),
+                selectinload(Application.english_proficiency_review),
+                selectinload(Application.department_evaluations),
+                selectinload(Application.ranking_entry),
+                selectinload(Application.intibak_table),
             )
             .where(Application.id == app_id)
         )

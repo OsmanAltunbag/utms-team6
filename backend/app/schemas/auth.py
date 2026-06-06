@@ -30,6 +30,17 @@ class TokenResponse(BaseModel):
     must_change_password: bool = False
 
 
+class MeResponse(BaseModel):
+    """Current session identity — role comes from the DB, not sessionStorage."""
+
+    id: str
+    email: str
+    role: str
+    first_name: str
+    last_name: str
+    must_change_password: bool
+
+
 class ChangePasswordRequest(BaseModel):
     new_password: str
     new_password_confirm: str

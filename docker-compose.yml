@@ -67,6 +67,14 @@ services:
         echo 'Bucket utms-documents ready.'
       "
 
+  # ── Mailpit (local SMTP mock — captures all outbound email) ───────────────
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "8025:8025"   # Web UI — http://localhost:8025
+      - "1025:1025"   # SMTP
+
   # ── FastAPI backend ───────────────────────────────────────────────────────
   backend:
     build:
@@ -115,12 +123,14 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
+    volumes:
+      - ./backend/app:/app/app
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4 -Q default,celery
 
 volumes:
   pg_data:

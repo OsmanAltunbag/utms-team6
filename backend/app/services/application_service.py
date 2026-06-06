@@ -33,9 +33,13 @@ _TRANSITIONS: dict[AppStatus, set[AppStatus]] = {
         AppStatus.REJECTED,
     },
     AppStatus.CORRECTION_REQUESTED: {AppStatus.UNDER_REVIEW},
-    AppStatus.ENGLISH_REVIEW: {AppStatus.DEPT_EVAL, AppStatus.REJECTED},
+    # ENGLISH_REVIEW → RANKING is the demo shortcut used by UC-05-01:
+    # YDYO-approved apps go straight to the Dean's queue, skipping the
+    # (not-yet-built) Faculty Commission and ranking screens.
+    AppStatus.ENGLISH_REVIEW: {AppStatus.DEPT_EVAL, AppStatus.RANKING, AppStatus.REJECTED},
     AppStatus.DEPT_EVAL: {AppStatus.RANKING, AppStatus.REJECTED},
-    AppStatus.RANKING: {AppStatus.ANNOUNCED, AppStatus.REJECTED},
+    AppStatus.RANKING: {AppStatus.DEAN_APPROVED, AppStatus.ANNOUNCED, AppStatus.REJECTED},
+    AppStatus.DEAN_APPROVED: {AppStatus.ANNOUNCED},
 }
 
 _REQUIRED_DOC_TYPES = {

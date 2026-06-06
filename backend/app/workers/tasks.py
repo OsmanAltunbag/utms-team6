@@ -71,23 +71,21 @@ def _base_html(title: str, body_content: str) -> str:
 
 
 def _smtp_send(to_address: str, subject: str, html_body: str) -> None:
-    """Low-level SMTP send (Gmail App Password) — raises on failure."""
-    if not settings.SMTP_USERNAME or not settings.SMTP_PASSWORD:
-        raise RuntimeError("SMTP credentials are not configured")
-
+    """Low-level SMTP send — Mailpit locally, Gmail with TLS in production."""
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = settings.FROM_EMAIL
     msg["To"] = to_address
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-    # App Password may be pasted with spaces ("xxxx xxxx xxxx xxxx") — strip them.
-    password = settings.SMTP_PASSWORD.replace(" ", "")
-
     with smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT, timeout=30) as smtp:
         smtp.ehlo()
-        smtp.starttls()
-        smtp.login(settings.SMTP_USERNAME, password)
+        if settings.SMTP_USE_TLS:
+            smtp.starttls()
+            smtp.ehlo()
+        if settings.SMTP_USE_TLS and settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
+            password = settings.SMTP_PASSWORD.replace(" ", "")
+            smtp.login(settings.SMTP_USERNAME, password)
         smtp.sendmail(settings.FROM_EMAIL, [to_address], msg.as_string())
 
 

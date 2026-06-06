@@ -142,6 +142,18 @@ async def request_correction(
     return {"id": str(app.id), "status": app.status.value}
 
 
+@router.post("/applications/{application_id}/announce")
+async def announce_application(
+    application_id: uuid.UUID,
+    current_user=Depends(_require_sa),
+    db: AsyncSession = Depends(get_db),
+):
+    """Publish the final transfer result for a dean-approved application."""
+    svc = OfficerApplicationService(db)
+    app = await svc.announce_application(application_id, current_user.id)
+    return {"id": str(app.id), "status": app.status.value, "message": "Result announced"}
+
+
 @router.post("/applications/{application_id}/reject")
 async def reject_application(
     application_id: uuid.UUID,

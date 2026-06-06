@@ -6,13 +6,14 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.domain.application import Application
 from app.domain.audit import AuditLog
 from app.domain.enums import AppStatus
+from app.domain.user import Applicant
 from app.repositories.application_repository import ApplicationRepository
 from app.services.application_service import ApplicationService
 from app.services.notification_service import NotificationService
@@ -24,6 +25,16 @@ _VALID_REJECTION_CODES = {
     "DISCIPLINARY_RECORD",
     "UNSUITABLE_PROGRAM_MATCH",
     "OTHER",
+}
+
+DEAN_REJECTION_LABELS: dict[str, str] = {
+    "INSUFFICIENT_ACADEMIC_STANDING": (
+        "Failure to meet the grade point average requirement."
+    ),
+    "QUOTA_LIMIT_REACHED": "Program quota limit has been reached.",
+    "DISCIPLINARY_RECORD": "Disciplinary record on file.",
+    "UNSUITABLE_PROGRAM_MATCH": "Unsuitable program match.",
+    "OTHER": "Other reason (see note).",
 }
 
 
@@ -38,17 +49,44 @@ class DeanOfficeService:
         program_id: Optional[uuid.UUID] = None,
         period_id: Optional[uuid.UUID] = None,
     ) -> list[Application]:
+        """Returns every application that has entered the dean's review cycle:
+
+          - RANKING                                        → pending dean decision
+          - DEAN_APPROVED / ANNOUNCED                      → dean-approved (final)
+          - REJECTED **with a DEAN_FINAL_REJECTED audit log** → dean-rejected (final)
+
+        REJECTED apps that were rejected earlier in the pipeline (e.g. UC-05-02
+        failed English exam) are intentionally excluded so they don't pollute
+        the dean's screen.
+        """
+        dean_rejected_subq = (
+            select(AuditLog.entity_id)
+            .where(AuditLog.action == "DEAN_FINAL_REJECTED")
+            .scalar_subquery()
+        )
+
         q = (
             select(Application)
             .options(
-                selectinload(Application.applicant),
+                selectinload(Application.applicant).selectinload(Applicant.user),
                 selectinload(Application.program),
                 selectinload(Application.period),
                 selectinload(Application.ranking_entry),
                 selectinload(Application.intibak_table),
                 selectinload(Application.academic_record),
             )
-            .where(Application.status == AppStatus.RANKING)
+            .where(
+                or_(
+                    Application.status == AppStatus.RANKING,
+                    Application.status == AppStatus.DEAN_APPROVED,
+                    Application.status == AppStatus.ANNOUNCED,
+                    and_(
+                        Application.status == AppStatus.REJECTED,
+                        Application.id.in_(dean_rejected_subq),
+                    ),
+                )
+            )
+            .order_by(Application.submitted_at.desc().nulls_last())
         )
         if program_id:
             q = q.where(Application.program_id == program_id)
@@ -62,7 +100,7 @@ class DeanOfficeService:
         result = await self.db.execute(
             select(Application)
             .options(
-                selectinload(Application.applicant),
+                selectinload(Application.applicant).selectinload(Applicant.user),
                 selectinload(Application.program),
                 selectinload(Application.period),
                 selectinload(Application.academic_record),
@@ -96,8 +134,10 @@ class DeanOfficeService:
             )
 
         await self._app_svc.change_status(
-            application_id, AppStatus.ANNOUNCED, approver_id,
-            "Dean's final approval — Transfer Accepted"
+            application_id,
+            AppStatus.DEAN_APPROVED,
+            approver_id,
+            "Dean's final approval — routed to Student Affairs for announcement",
         )
 
         log = AuditLog(
@@ -107,7 +147,8 @@ class DeanOfficeService:
             entity_id=application_id,
             old_value={"status": AppStatus.RANKING.value},
             new_value={
-                "status": AppStatus.ANNOUNCED.value,
+                "status": AppStatus.DEAN_APPROVED.value,
+                "routed_to": "STUDENT_AFFAIRS",
                 "ip_address": ip_address,
                 "approved_at": datetime.now(timezone.utc).isoformat(),
             },
@@ -117,8 +158,11 @@ class DeanOfficeService:
 
         await self._notify(
             app,
-            decision="Onaylandı",
-            next_steps="Tebrikler! Transfer başvurunuz Dekanlık tarafından onaylandı. Kayıt tarihlerine dikkat ediniz.",
+            decision="Dekanlık Onayı",
+            next_steps=(
+                "Transfer başvurunuz Dekanlık tarafından onaylandı. "
+                "Sonuç Öğrenci İşleri tarafından ilan edilecektir."
+            ),
         )
         return app
 
@@ -129,7 +173,7 @@ class DeanOfficeService:
         rejection_code: str,
         note: str,
         ip_address: str,
-    ) -> Application:
+    ) -> tuple[Application, AuditLog, str]:
         if rejection_code not in _VALID_REJECTION_CODES:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -144,9 +188,16 @@ class DeanOfficeService:
                 detail=f"Expected RANKING, got {app.status.value}",
             )
 
+        rejection_reason = DEAN_REJECTION_LABELS[rejection_code]
+        status_note = f"Dean's final rejection — {rejection_reason}"
+        if note.strip():
+            status_note = f"{status_note} ({note.strip()})"
+
         await self._app_svc.change_status(
-            application_id, AppStatus.REJECTED, approver_id,
-            f"Dean's final rejection — {rejection_code}: {note}"
+            application_id,
+            AppStatus.REJECTED,
+            approver_id,
+            status_note,
         )
 
         log = AuditLog(
@@ -158,6 +209,7 @@ class DeanOfficeService:
             new_value={
                 "status": AppStatus.REJECTED.value,
                 "rejection_code": rejection_code,
+                "rejection_reason": rejection_reason,
                 "note": note,
                 "ip_address": ip_address,
                 "rejected_at": datetime.now(timezone.utc).isoformat(),
@@ -168,10 +220,13 @@ class DeanOfficeService:
 
         await self._notify(
             app,
-            decision="Reddedildi",
-            next_steps=f"Transfer başvurunuz Dekanlık tarafından reddedildi. Sebep: {rejection_code}",
+            decision="Transfer Rejected",
+            next_steps=(
+                f"Transfer başvurunuz Dekanlık tarafından reddedildi. "
+                f"Sebep: {rejection_reason}"
+            ),
         )
-        return app
+        return app, log, rejection_reason
 
     async def _notify(
         self, app: Application, decision: str, next_steps: str

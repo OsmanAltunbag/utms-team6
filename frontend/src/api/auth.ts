@@ -1,5 +1,5 @@
 import axios, { AxiosError } from 'axios'
-import type { TokenResponse, ApiError } from '../types/auth'
+import type { TokenResponse, MeResponse, ApiError } from '../types/auth'
 
 const client = axios.create({
   baseURL: '/api',
@@ -36,6 +36,12 @@ export async function login(payload: {
   password: string
 }): Promise<TokenResponse> {
   const { data } = await client.post<TokenResponse>('/auth/login', payload)
+  return data
+}
+
+/** Live session identity from the HttpOnly cookie (authoritative role). */
+export async function getMe(): Promise<MeResponse> {
+  const { data } = await client.get<MeResponse>('/auth/me')
   return data
 }
 
