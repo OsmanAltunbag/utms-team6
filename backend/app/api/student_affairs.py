@@ -11,7 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import require_role
 from app.domain.enums import AppStatus, UserRole
-from app.schemas.application import ApplicationDetailResponse, ApplicationSummary
+from app.schemas.application import (
+    ApplicationDetailResponse,
+    ApplicationSummary,
+    EligibilityCheckResponse,
+)
 from app.services.officer_service import OfficerApplicationService
 from pydantic import BaseModel
 
@@ -62,7 +66,28 @@ async def get_application(
     if app is None:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Application not found")
-    return ApplicationDetailResponse.model_validate(app)
+    # Build the response explicitly: `progress` comes from a method, not an
+    # attribute, so model_validate(app) cannot populate it.
+    return ApplicationDetailResponse(
+        id=app.id,
+        applicant_id=app.applicant_id,
+        program_id=app.program_id,
+        period_id=app.period_id,
+        status=app.status.value,
+        tracking_number=app.tracking_number,
+        submitted_at=app.submitted_at,
+        created_at=app.created_at,
+        updated_at=app.updated_at,
+        progress=app.get_progress(),
+        eligibility_checks=[
+            EligibilityCheckResponse(
+                rule_key=c.rule_key,
+                passed=c.passed,
+                detail=c.detail,
+            )
+            for c in app.eligibility_checks
+        ],
+    )
 
 
 @router.post("/applications/{application_id}/approve-verification")
