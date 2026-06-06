@@ -122,32 +122,19 @@ class EvaluationService:
         self.db.add(log)
         await self.db.flush()
 
-        # Advance application to RANKING (UNDER_REVIEW → RANKING)
-        app.status = AppStatus.RANKING
-        app.updated_at = datetime.now(timezone.utc)
-        await self.db.flush()
-
-        status_log = AuditLog(
-            actor_id=evaluator_id,
-            action="STATUS_CHANGED",
-            entity_type="Application",
-            entity_id=app.id,
-            old_value={"status": AppStatus.UNDER_REVIEW.value},
-            new_value={"status": AppStatus.RANKING.value},
-        )
-        self.db.add(status_log)
-        await self.db.flush()
+        # Status stays UNDER_REVIEW — dept conditions must be confirmed next
+        # (UNDER_REVIEW → ENGLISH_REVIEW is done by EligibilityEngine after dept eval)
 
         await self.db.commit()
 
         try:
             from app.core.redis import publish_status_change
             await asyncio.wait_for(
-                publish_status_change(str(app.id), AppStatus.RANKING.value),
+                publish_status_change(str(app.id), AppStatus.UNDER_REVIEW.value),
                 timeout=1.0,
             )
         except Exception:
-            pass  # non-fatal — SSE push is best-effort
+            pass
 
         return record
 

@@ -3,13 +3,15 @@ import toast from 'react-hot-toast'
 import {
   Home, ClipboardList, ArrowLeft, Eye, CheckCircle, XCircle,
   Edit2, AlertTriangle, Lock, FileText, Activity, ShieldCheck,
-  BookOpen, AlertCircle, RefreshCw, Link2,
+  BookOpen, AlertCircle, RefreshCw, Link2, BarChart2, Table,
+  Users, ChevronUp, Plus,
 } from 'lucide-react'
 import { Sidebar } from '../components/Sidebar'
 import { StatusBadge } from '../components/StatusBadge'
 import Spinner from '../components/Spinner'
 import { extractErrorMessage } from '../api/auth'
-import { getApplicationStatus } from '../api/applications'
+import { getApplicationStatus, listPrograms, listOpenPeriods } from '../api/applications'
+import type { ProgramOption, PeriodOption } from '../api/applications'
 import { getPreviewUrl } from '../api/applications'
 import {
   listYGKApplications,
@@ -20,12 +22,25 @@ import {
   getDeptConditions,
   evaluateConditions,
   manualCourseMapping,
+  generateRanking,
+  getRanking,
+  approveRanking,
+  deleteRanking,
+  returnRankingForCorrection,
+  getWaitlist,
+  promoteWaitlisted,
+  createIntibakTable,
+  getIntibakTable,
+  addCourseMapping,
+  submitIntibakTable,
 } from '../api/ygk'
 import type {
   YGKApplicationSummary,
   YGKEvaluationDetail,
   CorrectionField,
   DeptConditionsResponse,
+  RankingResult,
+  IntibakTable,
 } from '../types/ygk'
 
 // ---------------------------------------------------------------------------
@@ -1083,6 +1098,628 @@ function EvaluationDetail({
 }
 
 // ---------------------------------------------------------------------------
+// UC-04-03 & UC-04-04 & UC-04-06: Ranking Page
+// ---------------------------------------------------------------------------
+
+const RANKING_STORAGE_KEY = 'utms_last_ranking_id'
+
+function RankingPage() {
+  const [programs, setPrograms] = useState<ProgramOption[]>([])
+  const [periods, setPeriods] = useState<PeriodOption[]>([])
+  const [programId, setProgramId] = useState('')
+  const [periodId, setPeriodId] = useState('')
+  const [ranking, setRanking] = useState<RankingResult | null>(null)
+  const [loadingExisting, setLoadingExisting] = useState(false)
+  const [generating, setGenerating] = useState(false)
+  const [approving, setApproving] = useState(false)
+  const [returning, setReturning] = useState(false)
+  const [returnNote, setReturnNote] = useState('')
+  const [showReturnForm, setShowReturnForm] = useState(false)
+  const [waitlist, setWaitlist] = useState<{ vacant_slots: number; waitlisted: Array<{ application_id: string; position: number; composite_score: number }> } | null>(null)
+  const [promotingId, setPromotingId] = useState('')
+  const [promoting, setPromoting] = useState(false)
+
+  useEffect(() => {
+    Promise.all([listPrograms(), listOpenPeriods()]).then(([p, per]) => {
+      setPrograms(p)
+      setPeriods(per)
+      if (p.length > 0) setProgramId(p[0].id)
+      if (per.length > 0) setPeriodId(per[0].id)
+    }).catch(() => toast.error('Failed to load programs/periods.'))
+
+    // Load last saved ranking from localStorage
+    const savedId = localStorage.getItem(RANKING_STORAGE_KEY)
+    if (savedId) {
+      setLoadingExisting(true)
+      getRanking(savedId)
+        .then(r => setRanking(r))
+        .catch(() => localStorage.removeItem(RANKING_STORAGE_KEY))
+        .finally(() => setLoadingExisting(false))
+    }
+  }, [])
+
+  async function handleGenerate() {
+    if (!programId || !periodId) { toast.error('Select a program and period.'); return }
+    setGenerating(true)
+    try {
+      const result = await generateRanking(programId, periodId)
+      const full = await getRanking(result.id)
+      setRanking({ ...full, excluded_candidates: result.excluded_candidates })
+      localStorage.setItem(RANKING_STORAGE_KEY, result.id)
+      setWaitlist(null)
+      toast.success('Ranking generated successfully.')
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  async function handleApprove() {
+    if (!ranking) return
+    setApproving(true)
+    try {
+      const result = await approveRanking(ranking.id)
+      setRanking(prev => prev ? { ...prev, status: result.status, approved_at: result.approved_at } : prev)
+      toast.success('Ranking approved and locked.')
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setApproving(false)
+    }
+  }
+
+  async function handleReturn() {
+    if (!ranking || !returnNote.trim()) { toast.error('Return note is required.'); return }
+    setReturning(true)
+    try {
+      await returnRankingForCorrection(ranking.id, returnNote.trim())
+      setRanking(prev => prev ? { ...prev, status: 'CORRECTION_REQUESTED' } : prev)
+      setShowReturnForm(false)
+      setReturnNote('')
+      toast.success('Ranking returned for correction.')
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setReturning(false)
+    }
+  }
+
+  async function handleLoadWaitlist() {
+    if (!ranking) return
+    try {
+      const data = await getWaitlist(ranking.id)
+      setWaitlist(data)
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    }
+  }
+
+  async function handlePromote() {
+    if (!ranking || !promotingId.trim()) { toast.error('Enter the withdrawn application ID.'); return }
+    setPromoting(true)
+    try {
+      const result = await promoteWaitlisted(ranking.id, promotingId.trim())
+      toast.success(result.message)
+      setPromotingId('')
+      const data = await getWaitlist(ranking.id)
+      setWaitlist(data)
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setPromoting(false)
+    }
+  }
+
+  const isApproved = ranking?.status === 'APPROVED'
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold text-gray-900">Generate & Approve Ranking</h1>
+        <p className="text-gray-500 text-sm mt-1">UC-04-03 · UC-04-04 · UC-04-06</p>
+      </div>
+
+      {/* Generate form */}
+      <div className="bg-white rounded-lg shadow-sm p-6 space-y-4">
+        <div className="flex items-center gap-2 mb-2">
+          <BarChart2 className="w-5 h-5 text-indigo-600" />
+          <h2 className="text-base font-semibold text-gray-900">Generate Ranking (UC-04-03)</h2>
+        </div>
+
+        {loadingExisting ? (
+          <div className="flex items-center gap-2 text-sm text-gray-500"><Spinner /> Loading saved ranking…</div>
+        ) : !ranking && (
+          <>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Program</label>
+                <select value={programId} onChange={e => setProgramId(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
+                  {programs.map(p => <option key={p.id} value={p.id}>{p.name} ({p.code}) — Quota: {p.quota}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Period</label>
+                <select value={periodId} onChange={e => setPeriodId(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
+                  {periods.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                </select>
+              </div>
+            </div>
+            <button onClick={handleGenerate} disabled={generating}
+              className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+              {generating ? <Spinner /> : <BarChart2 className="w-4 h-4" />}
+              {generating ? 'Generating…' : 'Generate Ranking'}
+            </button>
+          </>
+        )}
+
+        {ranking && !loadingExisting && (
+          <div className="flex items-center gap-2 text-xs text-indigo-600 bg-indigo-50 rounded-lg px-3 py-2">
+            <BarChart2 className="w-3 h-3" />
+            Ranking loaded: <span className="font-mono">{ranking.id}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Ranking result */}
+      {ranking && (
+        <>
+          <div className="bg-white rounded-lg shadow-sm p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Table className="w-5 h-5 text-indigo-600" />
+                <h2 className="text-base font-semibold text-gray-900">Ranking Report</h2>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                  isApproved ? 'bg-green-100 text-green-700' :
+                  ranking.status === 'CORRECTION_REQUESTED' ? 'bg-red-100 text-red-700' :
+                  'bg-yellow-100 text-yellow-700'
+                }`}>{ranking.status}</span>
+                {ranking.approved_at && (
+                  <span className="text-xs text-gray-400">
+                    Approved: {new Date(ranking.approved_at).toLocaleString()}
+                  </span>
+                )}
+                <button
+                  onClick={async () => {
+                    try {
+                      if (ranking && ranking.status !== 'APPROVED') {
+                        await deleteRanking(ranking.id)
+                      }
+                    } catch { /* ignore */ }
+                    setRanking(null)
+                    setWaitlist(null)
+                    localStorage.removeItem(RANKING_STORAGE_KEY)
+                  }}
+                  className="text-xs text-red-500 hover:text-red-700 border border-red-200 px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors">
+                  Clear & Start New
+                </button>
+              </div>
+            </div>
+
+            {/* Excluded candidates banner */}
+            {ranking.excluded_candidates && ranking.excluded_candidates.length > 0 && (
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <AlertTriangle className="w-4 h-4 text-orange-600" />
+                  <p className="text-sm font-semibold text-orange-800">Excluded Candidates (Missing Score Data)</p>
+                </div>
+                <ul className="space-y-1">
+                  {ranking.excluded_candidates.map((c, i) => (
+                    <li key={i} className="text-xs text-orange-700 font-mono">{c.application_id} — {c.reason}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Ranking table */}
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-gray-400 border-b border-gray-100 bg-gray-50">
+                  <th className="px-4 py-2 font-medium">Rank</th>
+                  <th className="px-4 py-2 font-medium">Application ID</th>
+                  <th className="px-4 py-2 font-medium">Composite Score</th>
+                  <th className="px-4 py-2 font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(ranking.entries ?? []).map(entry => (
+                  <tr key={entry.application_id} className={`border-b border-gray-50 ${entry.is_primary ? 'bg-green-50' : 'bg-yellow-50'}`}>
+                    <td className="px-4 py-3 font-bold text-gray-900">#{entry.position}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-gray-600">{entry.application_id}</td>
+                    <td className="px-4 py-3 font-semibold text-indigo-700">{entry.composite_score.toFixed(3)}</td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${entry.is_primary ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                        {entry.is_primary ? 'Asil (Primary)' : 'Yedek (Waitlist)'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {/* Approve / Return buttons (UC-04-04) */}
+            {!isApproved && ranking.status !== 'CORRECTION_REQUESTED' && (
+              <div className="pt-4 border-t border-gray-100 flex items-center gap-3 flex-wrap">
+                <button onClick={handleApprove} disabled={approving}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors">
+                  {approving ? <Spinner /> : <CheckCircle className="w-4 h-4" />}
+                  {approving ? 'Approving…' : 'Approve Ranking (UC-04-04)'}
+                </button>
+                <button onClick={() => setShowReturnForm(v => !v)}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-white text-red-600 text-sm font-semibold rounded-lg border border-red-300 hover:bg-red-50 transition-colors">
+                  <XCircle className="w-4 h-4" />
+                  Return for Correction
+                </button>
+              </div>
+            )}
+
+            {isApproved && (
+              <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 rounded-lg p-3">
+                <Lock className="w-4 h-4" />
+                Ranking is approved and locked — no further modifications allowed.
+              </div>
+            )}
+
+            {showReturnForm && (
+              <div className="pt-4 border-t border-gray-100 space-y-3">
+                <label className="block text-xs text-gray-500">Return Note (required)</label>
+                <textarea value={returnNote} onChange={e => setReturnNote(e.target.value)} rows={3}
+                  placeholder="Describe the inconsistency or reason for return…"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 resize-none" />
+                <div className="flex gap-3">
+                  <button onClick={handleReturn} disabled={returning || !returnNote.trim()}
+                    className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50">
+                    {returning ? <Spinner /> : <XCircle className="w-4 h-4" />}
+                    Submit Return
+                  </button>
+                  <button onClick={() => setShowReturnForm(false)} className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Waitlist management (UC-04-06) */}
+          {isApproved && (
+            <div className="bg-white rounded-lg shadow-sm p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Users className="w-5 h-5 text-indigo-600" />
+                  <h2 className="text-base font-semibold text-gray-900">Waitlist Management (UC-04-06)</h2>
+                </div>
+                <button onClick={handleLoadWaitlist}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 border border-indigo-200">
+                  <RefreshCw className="w-3 h-3" /> Load Waitlist
+                </button>
+              </div>
+
+              {waitlist && (
+                <>
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
+                    Vacant slots: <strong>{waitlist.vacant_slots}</strong>
+                  </div>
+                  {waitlist.waitlisted.length === 0 ? (
+                    <p className="text-gray-400 text-sm">No candidates remain on waitlist.</p>
+                  ) : (
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-xs text-gray-400 border-b border-gray-100 bg-gray-50">
+                          <th className="px-4 py-2 font-medium">Position</th>
+                          <th className="px-4 py-2 font-medium">Application ID</th>
+                          <th className="px-4 py-2 font-medium">Score</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {waitlist.waitlisted.map(w => (
+                          <tr key={w.application_id} className="border-b border-gray-50">
+                            <td className="px-4 py-3 font-bold">#{w.position}</td>
+                            <td className="px-4 py-3 font-mono text-xs text-gray-600">{w.application_id}</td>
+                            <td className="px-4 py-3 font-semibold text-indigo-700">{w.composite_score.toFixed(3)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+
+                  <div className="pt-4 border-t border-gray-100 space-y-3">
+                    <p className="text-xs text-gray-500">Promote next waitlisted candidate — enter the withdrawn applicant's Application ID:</p>
+                    <div className="flex gap-3">
+                      <input type="text" value={promotingId} onChange={e => setPromotingId(e.target.value)}
+                        placeholder="Withdrawn Application ID…"
+                        className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                      <button onClick={handlePromote} disabled={promoting || !promotingId.trim()}
+                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+                        {promoting ? <Spinner /> : <ChevronUp className="w-4 h-4" />}
+                        Promote Next
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// UC-04-05: Intibak Page
+// ---------------------------------------------------------------------------
+
+function IntibakPage() {
+  const [apps, setApps] = useState<YGKApplicationSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedApp, setSelectedApp] = useState<YGKApplicationSummary | null>(null)
+  const [table, setTable] = useState<IntibakTable | null>(null)
+  const [creatingTable, setCreatingTable] = useState(false)
+  const [submittingTable, setSubmittingTable] = useState(false)
+
+  // New mapping form state
+  const [sourceCourse, setSourceCourse] = useState('')
+  const [sourceCredits, setSourceCredits] = useState('')
+  const [targetCourse, setTargetCourse] = useState('')
+  const [targetCredits, setTargetCredits] = useState('')
+  const [equivalenceType, setEquivalenceType] = useState('FULL')
+  const [notes, setNotes] = useState('')
+  const [addingMapping, setAddingMapping] = useState(false)
+
+  useEffect(() => {
+    listYGKApplications('RANKING')
+      .then(setApps)
+      .catch(() => toast.error('Failed to load applications.'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  async function handleSelectApp(app: YGKApplicationSummary) {
+    setSelectedApp(app)
+    setTable(null)
+    setCreatingTable(true)
+    try {
+      const created = await createIntibakTable(app.id)
+      const full = await getIntibakTable(created.id)
+      setTable(full)
+    } catch {
+      // Table may already exist — try fetching via error
+      toast.error('Could not create or load intibak table.')
+    } finally {
+      setCreatingTable(false)
+    }
+  }
+
+  async function handleAddMapping(e: React.FormEvent) {
+    e.preventDefault()
+    if (!table) return
+    setAddingMapping(true)
+    try {
+      await addCourseMapping(table.id, {
+        source_course: sourceCourse,
+        source_credits: sourceCredits ? parseFloat(sourceCredits) : null,
+        target_course: targetCourse,
+        target_credits: targetCredits ? parseFloat(targetCredits) : null,
+        equivalence_type: equivalenceType,
+        notes: notes || null,
+      })
+      const updated = await getIntibakTable(table.id)
+      setTable(updated)
+      setSourceCourse(''); setSourceCredits(''); setTargetCourse(''); setTargetCredits(''); setNotes('')
+      toast.success('Course mapping added.')
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setAddingMapping(false)
+    }
+  }
+
+  async function handleSubmit() {
+    if (!table) return
+    if (!window.confirm('Submit intibak table? It will become read-only after submission.')) return
+    setSubmittingTable(true)
+    try {
+      await submitIntibakTable(table.id)
+      const updated = await getIntibakTable(table.id)
+      setTable(updated)
+      toast.success('Intibak table submitted to Dean\'s Office.')
+    } catch (err) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setSubmittingTable(false)
+    }
+  }
+
+  const isSubmitted = table?.status === 'SUBMITTED'
+
+  if (loading) return <div className="flex justify-center py-16"><Spinner /></div>
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold text-gray-900">Course Equivalency (İntibak)</h1>
+        <p className="text-gray-500 text-sm mt-1">UC-04-05 — Prepare course equivalence tables for accepted applicants</p>
+      </div>
+
+      {!selectedApp ? (
+        <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100">
+            <p className="text-sm text-gray-500">Select an applicant from the RANKING list to prepare their intibak table.</p>
+          </div>
+          {apps.length === 0 ? (
+            <div className="text-center py-16">
+              <Table className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-500 text-sm">No applicants in RANKING status.</p>
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-gray-400 border-b border-gray-100 bg-gray-50">
+                  <th className="px-6 py-3 font-medium">Tracking No.</th>
+                  <th className="px-6 py-3 font-medium">Applicant</th>
+                  <th className="px-6 py-3 font-medium">Program</th>
+                  <th className="px-6 py-3 font-medium">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {apps.map(app => (
+                  <tr key={app.id} className="border-b border-gray-50 hover:bg-indigo-50 transition-colors">
+                    <td className="px-6 py-4 font-mono text-xs text-gray-600">{app.tracking_number || '—'}</td>
+                    <td className="px-6 py-4 font-medium text-gray-900">{app.applicant || 'Unknown'}</td>
+                    <td className="px-6 py-4 text-gray-600">{app.program || '—'}</td>
+                    <td className="px-6 py-4">
+                      <button onClick={() => handleSelectApp(app)}
+                        className="flex items-center gap-1 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+                        <Plus className="w-3 h-3" /> Prepare İntibak
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-6">
+          <button onClick={() => { setSelectedApp(null); setTable(null) }}
+            className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700">
+            <ArrowLeft className="w-4 h-4" /> Back to list
+          </button>
+
+          <div className="bg-white rounded-lg shadow-sm p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">{selectedApp.applicant}</h2>
+                <p className="text-xs text-gray-400 font-mono">{selectedApp.tracking_number}</p>
+              </div>
+              {table && (
+                <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                  isSubmitted ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                }`}>{table.status}</span>
+              )}
+            </div>
+
+            {creatingTable ? (
+              <div className="flex justify-center py-8"><Spinner /></div>
+            ) : table ? (
+              <>
+                {isSubmitted && (
+                  <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 rounded-lg p-3 mb-4">
+                    <Lock className="w-4 h-4" />
+                    Table submitted — read-only. Submitted at: {table.submitted_at ? new Date(table.submitted_at).toLocaleString() : '—'}
+                  </div>
+                )}
+
+                {/* Course mappings table */}
+                {table.course_mappings.length > 0 && (
+                  <div className="mb-6 overflow-x-auto">
+                    <table className="w-full text-sm border border-gray-100 rounded-lg overflow-hidden">
+                      <thead>
+                        <tr className="text-left text-xs text-gray-400 bg-gray-50 border-b border-gray-100">
+                          <th className="px-4 py-2 font-medium">External Course</th>
+                          <th className="px-4 py-2 font-medium">Credits</th>
+                          <th className="px-4 py-2 font-medium">IZTECH Course</th>
+                          <th className="px-4 py-2 font-medium">Credits</th>
+                          <th className="px-4 py-2 font-medium">Type</th>
+                          <th className="px-4 py-2 font-medium">Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {table.course_mappings.map(m => (
+                          <tr key={m.id} className="border-b border-gray-50">
+                            <td className="px-4 py-3 font-medium text-gray-900">{m.source_course}</td>
+                            <td className="px-4 py-3 text-gray-500">{m.source_credits ?? '—'}</td>
+                            <td className="px-4 py-3 font-medium text-indigo-700">{m.target_course}</td>
+                            <td className="px-4 py-3 text-gray-500">{m.target_credits ?? '—'}</td>
+                            <td className="px-4 py-3">
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                m.equivalence_type === 'FULL' ? 'bg-green-100 text-green-700' :
+                                m.equivalence_type === 'PARTIAL' ? 'bg-yellow-100 text-yellow-700' :
+                                'bg-gray-100 text-gray-500'
+                              }`}>{m.equivalence_type}</span>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-gray-400">{m.notes || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Add mapping form */}
+                {!isSubmitted && (
+                  <form onSubmit={handleAddMapping} className="border border-gray-200 rounded-lg p-4 space-y-4">
+                    <h3 className="text-sm font-semibold text-gray-700">Add Course Mapping</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">External Course Name *</label>
+                        <input required value={sourceCourse} onChange={e => setSourceCourse(e.target.value)}
+                          placeholder="e.g. CSE201 Data Structures"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">External Credits</label>
+                        <input type="number" step="0.5" min="0" value={sourceCredits} onChange={e => setSourceCredits(e.target.value)}
+                          placeholder="e.g. 3"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">IZTECH Course Name *</label>
+                        <input required value={targetCourse} onChange={e => setTargetCourse(e.target.value)}
+                          placeholder="e.g. CENG201 Data Structures"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">IZTECH Credits</label>
+                        <input type="number" step="0.5" min="0" value={targetCredits} onChange={e => setTargetCredits(e.target.value)}
+                          placeholder="e.g. 3"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">Equivalence Type *</label>
+                        <select value={equivalenceType} onChange={e => setEquivalenceType(e.target.value)}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
+                          <option value="FULL">FULL</option>
+                          <option value="PARTIAL">PARTIAL</option>
+                          <option value="NONE">NONE (No Equivalence)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">Notes</label>
+                        <input value={notes} onChange={e => setNotes(e.target.value)}
+                          placeholder="Optional notes…"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                      </div>
+                    </div>
+                    <button type="submit" disabled={addingMapping}
+                      className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+                      {addingMapping ? <Spinner /> : <Plus className="w-4 h-4" />}
+                      Add Mapping
+                    </button>
+                  </form>
+                )}
+
+                {/* Submit button */}
+                {!isSubmitted && table.course_mappings.length > 0 && (
+                  <div className="pt-4 border-t border-gray-100">
+                    <button onClick={handleSubmit} disabled={submittingTable}
+                      className="flex items-center gap-2 px-5 py-2.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50">
+                      {submittingTable ? <Spinner /> : <CheckCircle className="w-4 h-4" />}
+                      Submit İntibak Table to Dean's Office
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : null}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Root YGK Dashboard
 // ---------------------------------------------------------------------------
 
@@ -1093,7 +1730,7 @@ export default function YGKDashboard({
   userName: string
   onLogout: () => void
 }) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'pending'>('pending')
+  const [activeTab, setActiveTab] = useState<'overview' | 'pending' | 'ranking' | 'intibak'>('pending')
   const [selected, setSelected] = useState<YGKApplicationSummary | null>(null)
 
   return (
@@ -1110,6 +1747,18 @@ export default function YGKDashboard({
           onClick={() => { setActiveTab('pending'); setSelected(null) }}
           icon={ClipboardList}
           label="Pending Evaluation"
+        />
+        <NavBtn
+          active={activeTab === 'ranking' && !selected}
+          onClick={() => { setActiveTab('ranking'); setSelected(null) }}
+          icon={BarChart2}
+          label="Ranking"
+        />
+        <NavBtn
+          active={activeTab === 'intibak' && !selected}
+          onClick={() => { setActiveTab('intibak'); setSelected(null) }}
+          icon={Table}
+          label="İntibak"
         />
       </Sidebar>
 
@@ -1139,16 +1788,26 @@ export default function YGKDashboard({
               </div>
               <div className="bg-white rounded-lg shadow-sm p-6">
                 <p className="text-gray-500 text-sm">
-                  Use the <strong>Pending Evaluation</strong> tab to review and verify applicant scores.
+                  Use the tabs on the left to navigate: <strong>Pending Evaluation</strong>, <strong>Ranking</strong>, or <strong>İntibak</strong>.
                 </p>
               </div>
             </>
           )}
 
           {/* Pending evaluation list */}
-          {!selected && activeTab === 'pending' && (
+          <div className={!selected && activeTab === 'pending' ? '' : 'hidden'}>
             <ApplicationList onSelect={setSelected} />
-          )}
+          </div>
+
+          {/* Ranking tab (UC-04-03, UC-04-04, UC-04-06) */}
+          <div className={!selected && activeTab === 'ranking' ? '' : 'hidden'}>
+            <RankingPage />
+          </div>
+
+          {/* Intibak tab (UC-04-05) */}
+          <div className={!selected && activeTab === 'intibak' ? '' : 'hidden'}>
+            <IntibakPage />
+          </div>
 
         </div>
       </div>

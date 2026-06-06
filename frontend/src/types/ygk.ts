@@ -66,3 +66,42 @@ export interface ManualCourseMappingResult {
   passed: boolean
   detail: string | null
 }
+
+// Ranking
+export interface RankingEntry {
+  application_id: string
+  position: number
+  composite_score: number
+  is_primary: boolean
+}
+
+export interface RankingResult {
+  id: string
+  program_id?: string
+  program?: string | null
+  period?: string | null
+  status: string
+  approved_at?: string | null
+  published_at?: string | null
+  entries?: RankingEntry[]
+  excluded_candidates?: Array<{ application_id: string; reason: string }>
+}
+
+// Intibak
+export interface CourseMapping {
+  id: string
+  source_course: string
+  source_credits: number | null
+  target_course: string
+  target_credits: number | null
+  equivalence_type: string
+  notes: string | null
+}
+
+export interface IntibakTable {
+  id: string
+  application_id: string
+  status: string
+  submitted_at: string | null
+  course_mappings: CourseMapping[]
+}

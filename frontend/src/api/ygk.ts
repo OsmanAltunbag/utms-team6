@@ -7,6 +7,9 @@ import type {
   DeptConditionsResponse,
   EvaluateConditionsResult,
   ManualCourseMappingResult,
+  RankingResult,
+  IntibakTable,
+  CourseMapping,
 } from '../types/ygk'
 
 const client = axios.create({
@@ -111,5 +114,82 @@ export async function manualCourseMapping(
     `/applications/${applicationId}/manual-course-mapping`,
     { external_course, rule_key },
   )
+  return data
+}
+
+// ---------------------------------------------------------------------------
+// Ranking (UC-04-03, UC-04-04, UC-04-06)
+// ---------------------------------------------------------------------------
+
+export async function generateRanking(programId: string, periodId: string): Promise<RankingResult> {
+  const { data } = await client.post<RankingResult>('/rankings/generate', {
+    program_id: programId,
+    period_id: periodId,
+  })
+  return data
+}
+
+export async function getRanking(rankingId: string): Promise<RankingResult> {
+  const { data } = await client.get<RankingResult>(`/rankings/${rankingId}`)
+  return data
+}
+
+export async function approveRanking(rankingId: string): Promise<RankingResult> {
+  const { data } = await client.post<RankingResult>(`/rankings/${rankingId}/approve`)
+  return data
+}
+
+export async function deleteRanking(rankingId: string): Promise<void> {
+  await client.delete(`/rankings/${rankingId}`)
+}
+
+export async function returnRankingForCorrection(rankingId: string, note: string): Promise<{ id: string; status: string; note: string }> {
+  const { data } = await client.post(`/rankings/${rankingId}/return`, { note })
+  return data
+}
+
+export async function getWaitlist(rankingId: string): Promise<{ vacant_slots: number; waitlisted: Array<{ application_id: string; position: number; composite_score: number }> }> {
+  const { data } = await client.get(`/rankings/${rankingId}/waitlist`)
+  return data
+}
+
+export async function promoteWaitlisted(rankingId: string, withdrawnApplicationId: string): Promise<{ promoted: { application_id: string; position: number; composite_score: number } | null; message: string }> {
+  const { data } = await client.post(`/rankings/${rankingId}/promote-waitlisted`, {
+    withdrawn_application_id: withdrawnApplicationId,
+  })
+  return data
+}
+
+// ---------------------------------------------------------------------------
+// Intibak (UC-04-05)
+// ---------------------------------------------------------------------------
+
+export async function createIntibakTable(applicationId: string): Promise<{ id: string; application_id: string; status: string }> {
+  const { data } = await client.post(`/applications/${applicationId}/intibak`)
+  return data
+}
+
+export async function getIntibakTable(tableId: string): Promise<IntibakTable> {
+  const { data } = await client.get<IntibakTable>(`/intibak/${tableId}`)
+  return data
+}
+
+export async function addCourseMapping(
+  tableId: string,
+  mapping: {
+    source_course: string
+    source_credits?: number | null
+    target_course: string
+    target_credits?: number | null
+    equivalence_type: string
+    notes?: string | null
+  },
+): Promise<CourseMapping> {
+  const { data } = await client.post<CourseMapping>(`/intibak/${tableId}/mappings`, mapping)
+  return data
+}
+
+export async function submitIntibakTable(tableId: string): Promise<{ status: string; submitted_at: string }> {
+  const { data } = await client.post(`/intibak/${tableId}/submit`)
   return data
 }

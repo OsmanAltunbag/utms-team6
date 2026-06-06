@@ -285,6 +285,21 @@ class RankingService:
 
         return next_entry
 
+    async def delete_ranking(self, ranking_id: uuid.UUID) -> None:
+        result = await self.db.execute(
+            select(Ranking).where(Ranking.id == ranking_id)
+        )
+        ranking = result.scalar_one_or_none()
+        if ranking is None:
+            raise HTTPException(status_code=404, detail="Ranking not found")
+        entries_result = await self.db.execute(
+            select(RankingEntry).where(RankingEntry.ranking_id == ranking_id)
+        )
+        for entry in entries_result.scalars().all():
+            await self.db.delete(entry)
+        await self.db.delete(ranking)
+        await self.db.flush()
+
     async def get_waitlist(self, ranking_id: uuid.UUID) -> dict:
         result = await self.db.execute(
             select(Ranking)

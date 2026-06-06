@@ -100,6 +100,16 @@ async def approve_ranking(
     }
 
 
+@router.delete("/{ranking_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_ranking(
+    ranking_id: uuid.UUID,
+    current_user=Depends(_require_ygk),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = RankingService(db)
+    await svc.delete_ranking(ranking_id)
+
+
 @router.post("/{ranking_id}/return")
 async def return_for_correction(
     ranking_id: uuid.UUID,
