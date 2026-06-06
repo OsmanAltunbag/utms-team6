@@ -74,9 +74,8 @@ class PeriodService:
         if period is None:
             return False
         now = datetime.now(timezone.utc)
-        opens = period.opens_at.replace(tzinfo=timezone.utc) if period.opens_at.tzinfo is None else period.opens_at
-        closes = period.closes_at.replace(tzinfo=timezone.utc) if period.closes_at.tzinfo is None else period.closes_at
-        return period.is_active and opens <= now <= closes
+        return period.is_active and period.opens_at <= now <= period.closes_at
+
     async def update_period(
         self,
         period_id: uuid.UUID,
@@ -181,7 +180,15 @@ class PeriodService:
     async def activate_period(
         self, period_id: uuid.UUID, by: uuid.UUID
     ) -> ApplicationPeriod:
+        from datetime import timezone
         period = await self._get_or_404(period_id)
+        now = datetime.now(timezone.utc)
+        closes = period.closes_at.replace(tzinfo=timezone.utc) if period.closes_at.tzinfo is None else period.closes_at
+        if closes < now:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot activate a period whose deadline has passed. Use Extend Deadline first.",
+            )
         period.is_active = True
         await self.db.flush()
 
