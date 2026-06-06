@@ -77,6 +77,11 @@ export async function getIntibakTable(tableId: string): Promise<IntibakTable> {
   return data
 }
 
+export async function getIntibakTableByApplication(applicationId: string): Promise<IntibakTable> {
+  const { data } = await client.get<IntibakTable>(`/applications/${applicationId}/intibak`)
+  return data
+}
+
 export async function parseTranscript(tableId: string): Promise<{ courses: ParsedCourse[] }> {
   const { data } = await client.post<{ courses: ParsedCourse[] }>(`/intibak/${tableId}/parse-transcript`)
   return data
