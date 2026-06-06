@@ -11,7 +11,9 @@ import { StatusBadge } from '../components/StatusBadge'
 import { extractErrorMessage, logout } from '../api/auth'
 import { useAuth } from '../context/AuthContext'
 import {
+  createIntibakTable,
   getIntibakTable,
+  getIntibakTableByApplication,
   parseTranscript,
   suggestMatch,
   addMapping,
@@ -115,10 +117,11 @@ function NavBtn({ active, onClick, icon: Icon, label }: {
 // ---------------------------------------------------------------------------
 
 export default function IntibakPage() {
-  const { tableId } = useParams<{ tableId: string }>()
+  const { applicationId } = useParams<{ applicationId: string }>()
   const navigate = useNavigate()
   const { userName } = useAuth()
 
+  const [tableId, setTableId] = useState<string | null>(null)
   const [table, setTable] = useState<IntibakTable | null>(null)
   const [appDetail, setAppDetail] = useState<YGKEvaluationDetail | null>(null)
   const [loading, setLoading] = useState(true)
@@ -134,9 +137,22 @@ export default function IntibakPage() {
   }
 
   async function loadData() {
-    if (!tableId) return
+    if (!applicationId) return
     try {
-      const t = await getIntibakTable(tableId)
+      let resolvedTableId: string
+      try {
+        const created = await createIntibakTable(applicationId)
+        resolvedTableId = created.id
+      } catch (err: any) {
+        if (err?.response?.status === 409) {
+          const existing = await getIntibakTableByApplication(applicationId)
+          resolvedTableId = existing.id
+        } else {
+          throw err
+        }
+      }
+      setTableId(resolvedTableId)
+      const t = await getIntibakTable(resolvedTableId)
       setTable(t)
       setRows(t.mappings.map(mappingToRow))
       const detail = await getEvaluationDetail(t.application_id).catch(() => null)
@@ -149,7 +165,7 @@ export default function IntibakPage() {
     }
   }
 
-  useEffect(() => { loadData() }, [tableId])
+  useEffect(() => { loadData() }, [applicationId])
 
   // ---------------------------------------------------------------------------
   // Handlers

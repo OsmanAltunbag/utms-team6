@@ -22,7 +22,7 @@ export default function App() {
           <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
           <Route path="/change-password" element={<ChangePasswordPage />} />
           <Route
-            path="/intibak/:tableId"
+            path="/intibak/:applicationId"
             element={
               <ProtectedRoute>
                 <IntibakPage />

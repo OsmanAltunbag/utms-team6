@@ -14,7 +14,6 @@ import { extractErrorMessage } from '../api/auth'
 import { getApplicationStatus, listPrograms, listOpenPeriods } from '../api/applications'
 import type { ProgramOption, PeriodOption } from '../api/applications'
 import { getPreviewUrl } from '../api/applications'
-import { getIntibakTableByApplication } from '../api/intibak'
 import {
   listYGKApplications,
   getEvaluationDetail,
@@ -31,7 +30,6 @@ import {
   returnRankingForCorrection,
   getWaitlist,
   promoteWaitlisted,
-  createIntibakTable,
 } from '../api/ygk'
 import type {
   YGKApplicationSummary,
@@ -87,26 +85,10 @@ const DOC_TYPE_LABELS: Record<string, string> = {
   OTHER: 'Other',
 }
 
-// Shared helper — creates or fetches the existing intibak table then navigates.
-async function openIntibakTable(
-  applicationId: string,
-  navigate: NavigateFunction,
-) {
-  try {
-    const table = await createIntibakTable(applicationId)
-    navigate(`/intibak/${table.id}`)
-  } catch (err: any) {
-    if (err?.response?.status === 409) {
-      try {
-        const existing = await getIntibakTableByApplication(applicationId)
-        navigate(`/intibak/${existing.id}`)
-      } catch {
-        toast.error('Could not load existing intibak table.')
-      }
-    } else {
-      toast.error(extractErrorMessage(err))
-    }
-  }
+// Navigate to the intibak page — the page itself handles create-or-get flow.
+function openIntibakTable(applicationId: string, navigate: NavigateFunction) {
+  navigate(`/intibak/${applicationId}`)
+
 }
 
 // ---------------------------------------------------------------------------
