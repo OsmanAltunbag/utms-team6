@@ -11,8 +11,9 @@ from app.core.redis import (
 )
 from app.core.security import hash_password
 from app.domain.audit import AuditLog
+from app.core.config import settings
 from app.repositories.user_repository import UserRepository
-from app.workers.tasks import send_password_reset_email_impl
+from app.services.notification_service import NotificationService
 
 
 class PasswordResetService:
@@ -31,7 +32,17 @@ class PasswordResetService:
 
         token = str(uuid.uuid4())
         await store_pwd_reset_token(token, str(user.id))
-        background_tasks.add_task(send_password_reset_email_impl, email, token)
+        reset_link = f"{settings.FRONTEND_URL}/reset-password/{token}"
+        notif_svc = NotificationService(self.db)
+        await notif_svc.enqueue(
+            user_id=user.id,
+            subject="UTMS — Şifre Sıfırlama Talebi",
+            template="password_reset",
+            template_vars={
+                "reset_link": reset_link,
+                "title": "Şifre Sıfırlama",
+            },
+        )
 
     async def validate_token(self, token: str) -> str:
         """Return user_id string if the token is valid; raise 410 otherwise."""

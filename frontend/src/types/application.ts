@@ -114,3 +114,12 @@ export interface ApplicationStatus {
   history: HistoryEntry[]
   result: { outcome: string; reason: string | null } | null
 }
+
+export interface NotificationMessage {
+  id: string
+  subject: string | null
+  message: string
+  status: 'PENDING' | 'SENT' | 'FAILED'
+  sent_at: string | null
+  created_at: string
+}

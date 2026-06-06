@@ -15,6 +15,7 @@ from app.domain.audit import AuditLog
 from app.domain.enums import AppStatus
 from app.repositories.application_repository import ApplicationRepository
 from app.services.application_service import ApplicationService
+from app.services.notification_service import NotificationService
 
 
 _VALID_REJECTION_CODES = {
@@ -114,7 +115,11 @@ class DeanOfficeService:
         self.db.add(log)
         await self.db.flush()
 
-        self._notify(app, approver_id, "Tebrikler! Transfer başvurunuz Dekanlık tarafından onaylandı. Kayıt tarihlerine dikkat ediniz.")
+        await self._notify(
+            app,
+            decision="Onaylandı",
+            next_steps="Tebrikler! Transfer başvurunuz Dekanlık tarafından onaylandı. Kayıt tarihlerine dikkat ediniz.",
+        )
         return app
 
     async def reject_final(
@@ -161,21 +166,25 @@ class DeanOfficeService:
         self.db.add(log)
         await self.db.flush()
 
-        self._notify(app, approver_id, f"Transfer başvurunuz Dekanlık tarafından reddedildi. Sebep: {rejection_code}")
+        await self._notify(
+            app,
+            decision="Reddedildi",
+            next_steps=f"Transfer başvurunuz Dekanlık tarafından reddedildi. Sebep: {rejection_code}",
+        )
         return app
 
-    def _notify(self, app: Application, actor_id: uuid.UUID, message: str) -> None:
-        try:
-            from app.domain.notification import Notification
-            from app.domain.enums import NotifChannel, NotifStatus
-            notif = Notification(
-                user_id=app.applicant_id,
-                application_id=app.id,
-                channel=NotifChannel.EMAIL,
-                subject="UTMS — Dekanlık Kararı",
-                body=message,
-                status=NotifStatus.PENDING,
-            )
-            self.db.add(notif)
-        except Exception:
-            pass
+    async def _notify(
+        self, app: Application, decision: str, next_steps: str
+    ) -> None:
+        notif_svc = NotificationService(self.db)
+        await notif_svc.enqueue(
+            user_id=app.applicant_id,
+            subject="UTMS — Dekanlık Kararı",
+            application_id=app.id,
+            template="dean_decision",
+            template_vars={
+                "decision": decision,
+                "next_steps": next_steps,
+                "title": "Dekanlık Kararı",
+            },
+        )

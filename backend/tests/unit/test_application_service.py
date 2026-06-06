@@ -84,6 +84,10 @@ def _make_application(
     applicant.national_id = "12345678901"
     app.applicant = applicant
 
+    program = MagicMock()
+    program.name = "Computer Engineering"
+    app.program = program
+
     return app
 
 
@@ -270,9 +274,11 @@ async def test_submit_application_success():
 
     with (
         patch.object(service, "_change_status_internal", new=AsyncMock()),
-        patch("app.workers.tasks.send_application_confirmation") as mock_task,
+        patch(
+            "app.services.application_service.NotificationService.enqueue",
+            new=AsyncMock(),
+        ),
     ):
-        mock_task.delay = MagicMock()
         result = await service.submit_application(application.id)
 
     assert result.tracking_number is not None

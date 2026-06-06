@@ -13,8 +13,9 @@ from app.domain.audit import AuditLog
 from app.domain.enums import UserRole
 from app.domain.user import Applicant, User
 from app.repositories.user_repository import UserRepository
+from app.core.config import settings
 from app.schemas.auth import RegistrationRequest
-from app.workers.tasks import send_verification_email_impl
+from app.services.notification_service import NotificationService
 
 
 class RegistrationService:
@@ -65,8 +66,18 @@ class RegistrationService:
         token = str(uuid.uuid4())
         await store_email_verify_token(token, str(user.id))
 
-        # 7. Enqueue verification email
-        background_tasks.add_task(send_verification_email_impl, payload.university_email, token)
+        # 7. Enqueue verification email via notification worker (SPEC-020)
+        verify_link = f"{settings.FRONTEND_URL}/verify-email/{token}"
+        notif_svc = NotificationService(self.db)
+        await notif_svc.enqueue(
+            user_id=user.id,
+            subject="UTMS — E-posta Adresinizi Doğrulayın",
+            template="email_verification",
+            template_vars={
+                "verify_link": verify_link,
+                "title": "E-posta Doğrulama",
+            },
+        )
 
         # 8. Write audit log
         log = AuditLog(

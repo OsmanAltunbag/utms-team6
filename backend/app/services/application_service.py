@@ -18,6 +18,7 @@ from app.repositories.application_repository import ApplicationRepository
 from app.repositories.eligibility_repository import EligibilityRepository
 from app.repositories.period_repository import PeriodRepository
 from app.repositories.program_repository import ProgramRepository
+from app.services.notification_service import NotificationService
 
 logger = logging.getLogger(__name__)
 
@@ -261,14 +262,28 @@ class ApplicationService:
             note="Applicant submitted",
         )
 
-        # Enqueue confirmation notification
+        program_name = (
+            application.program.name
+            if application.program is not None
+            else "Transfer Program"
+        )
         try:
-            from app.workers.tasks import send_application_confirmation
-            send_application_confirmation.delay(
-                str(application.applicant_id), tracking_number
+            notif_svc = NotificationService(self.db)
+            await notif_svc.enqueue(
+                user_id=application.applicant_id,
+                subject="UTMS — Başvurunuz Alındı",
+                application_id=application.id,
+                template="application_submitted",
+                template_vars={
+                    "tracking_number": tracking_number,
+                    "program_name": program_name,
+                    "title": "Başvuru Alındı",
+                },
             )
         except Exception:
-            logger.warning("Failed to enqueue submission notification for %s", application_id)
+            logger.warning(
+                "Failed to enqueue submission notification for %s", application_id, exc_info=True
+            )
 
         return application
 

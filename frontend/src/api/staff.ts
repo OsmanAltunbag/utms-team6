@@ -1,5 +1,11 @@
 import axios from 'axios'
-import type { ResultsResponse, PublishResultsResponse } from '../types/staff'
+import type {
+  ResultsResponse,
+  PublishResultsResponse,
+  StaffApplicationSummary,
+  StaffApplicationDetail,
+  RejectionReasonCode,
+} from '../types/staff'
 
 const client = axios.create({
   baseURL: '/api/staff',
@@ -31,6 +37,58 @@ client.interceptors.response.use(
     return Promise.reject(error)
   },
 )
+
+// ---------------------------------------------------------------------------
+// SPEC-006: Application review
+// ---------------------------------------------------------------------------
+
+export async function listStaffApplications(params?: {
+  status?: string
+  program_id?: string
+  period_id?: string
+}): Promise<StaffApplicationSummary[]> {
+  const { data } = await client.get<StaffApplicationSummary[]>('/applications', { params })
+  return data
+}
+
+export async function getStaffApplication(id: string): Promise<StaffApplicationDetail> {
+  const { data } = await client.get<StaffApplicationDetail>(`/applications/${id}`)
+  return data
+}
+
+export async function approveVerification(applicationId: string): Promise<{ id: string; status: string }> {
+  const { data } = await client.post<{ id: string; status: string }>(
+    `/applications/${applicationId}/approve-verification`,
+  )
+  return data
+}
+
+export async function requestCorrection(
+  applicationId: string,
+  note: string,
+): Promise<{ id: string; status: string }> {
+  const { data } = await client.post<{ id: string; status: string }>(
+    `/applications/${applicationId}/request-correction`,
+    { note },
+  )
+  return data
+}
+
+export async function rejectStaffApplication(
+  applicationId: string,
+  reason_code: RejectionReasonCode,
+  note: string,
+): Promise<{ id: string; status: string }> {
+  const { data } = await client.post<{ id: string; status: string }>(
+    `/applications/${applicationId}/reject`,
+    { reason_code, note },
+  )
+  return data
+}
+
+// ---------------------------------------------------------------------------
+// SPEC-007: Results publication
+// ---------------------------------------------------------------------------
 
 export async function getResults(
   periodId: string,

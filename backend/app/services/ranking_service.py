@@ -270,7 +270,7 @@ class RankingService:
 
         next_app = await self._app_repo.get_by_id(next_entry.application_id)
         if next_app:
-            self._notify_promotion(next_app)
+            await self._notify_promotion(next_app)
 
         log = AuditLog(
             actor_id=actor_id,
@@ -305,18 +305,17 @@ class RankingService:
             "waitlisted": waitlisted,
         }
 
-    def _notify_promotion(self, app: Application) -> None:
-        try:
-            from app.domain.notification import Notification
-            from app.domain.enums import NotifChannel, NotifStatus
-            notif = Notification(
-                user_id=app.applicant_id,
-                application_id=app.id,
-                channel=NotifChannel.EMAIL,
-                subject="UTMS — Bekleme Listesinden Asil Listeye Geçtiniz",
-                body="Tebrikler! Bir kontenjan açılması nedeniyle asil listeye alındınız.",
-                status=NotifStatus.PENDING,
-            )
-            self.db.add(notif)
-        except Exception:
-            pass
+    async def _notify_promotion(self, app: Application) -> None:
+        from app.services.notification_service import NotificationService
+        notif_svc = NotificationService(self.db)
+        await notif_svc.enqueue(
+            user_id=app.applicant_id,
+            subject="UTMS — Bekleme Listesinden Asil Listeye Geçtiniz",
+            application_id=app.id,
+            template="results_announced",
+            template_vars={
+                "result": "Accepted",
+                "period_label": "Waitlist promotion",
+                "title": "Asil Listeye Geçiş",
+            },
+        )
