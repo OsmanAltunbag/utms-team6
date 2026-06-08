@@ -25,6 +25,10 @@ def _get_sync_session() -> Session:
 
 
 def _smtp_send(to_address: str, subject: str, html_body: str) -> None:
+    if settings.BREVO_API_KEY:
+        _brevo_api_send(to_address, subject, html_body)
+        return
+
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = settings.FROM_EMAIL
@@ -36,11 +40,31 @@ def _smtp_send(to_address: str, subject: str, html_body: str) -> None:
         if settings.SMTP_USE_TLS:
             smtp.starttls()
             smtp.ehlo()
-        # Mailpit (local dev) uses plain SMTP without AUTH; Gmail requires TLS + login.
         if settings.SMTP_USE_TLS and settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
             password = settings.SMTP_PASSWORD.replace(" ", "")
             smtp.login(settings.SMTP_USERNAME, password)
         smtp.sendmail(settings.FROM_EMAIL, [to_address], msg.as_string())
+
+
+def _brevo_api_send(to_address: str, subject: str, html_body: str) -> None:
+    import requests
+    sender_email = settings.SMTP_USERNAME or "noreply@iyte.edu.tr"
+    response = requests.post(
+        "https://api.brevo.com/v3/smtp/email",
+        headers={
+            "accept": "application/json",
+            "api-key": settings.BREVO_API_KEY,
+            "content-type": "application/json",
+        },
+        json={
+            "sender": {"name": "UTMS", "email": sender_email},
+            "to": [{"email": to_address}],
+            "subject": subject,
+            "htmlContent": html_body,
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
 
 
 def _render_html(subject: str, body: str) -> str:
