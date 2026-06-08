@@ -38,12 +38,13 @@ class CourseMappingUpdate(BaseModel):
     notes: Optional[str] = None
 
 
-def _table_response(table):
+def _table_response(table, transcript_document_id: str | None = None):
     return {
         "id": str(table.id),
         "application_id": str(table.application_id),
         "status": table.status.value,
         "submitted_at": table.submitted_at,
+        "transcript_document_id": transcript_document_id,
         "course_mappings": [
             {
                 "id": str(m.id),
@@ -76,9 +77,22 @@ async def get_intibak_table_by_application(
     current_user=Depends(_require_ygk),
     db: AsyncSession = Depends(get_db),
 ):
+    from sqlalchemy import select
+    from app.domain.document import Document
+    from app.domain.enums import DocStatus, DocType
+
     svc = IntibakService(db)
     table = await svc.get_table_by_application(application_id)
-    return _table_response(table)
+
+    transcript_doc = await db.scalar(
+        select(Document).where(
+            Document.application_id == application_id,
+            Document.doc_type == DocType.TRANSCRIPT,
+            Document.status.in_([DocStatus.ACCEPTED, DocStatus.PENDING]),
+        )
+    )
+    transcript_document_id = str(transcript_doc.id) if transcript_doc else None
+    return _table_response(table, transcript_document_id)
 
 
 @router.get("/intibak/suggest-match")

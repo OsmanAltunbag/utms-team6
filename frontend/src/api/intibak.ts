@@ -60,6 +60,7 @@ export interface IntibakTable {
   id: string
   application_id: string
   status: string
+  transcript_document_id: string | null
   mappings: CourseMapping[]
 }
 
@@ -110,6 +111,7 @@ function normalizeIntibakTable(data: Record<string, unknown>): IntibakTable {
     id: String(data.id),
     application_id: String(data.application_id),
     status: String(data.status),
+    transcript_document_id: (data.transcript_document_id as string | null) ?? null,
     mappings: rawMappings.map(normalizeMapping),
   }
 }
