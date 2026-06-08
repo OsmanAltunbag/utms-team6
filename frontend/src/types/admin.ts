@@ -27,6 +27,10 @@ export interface StaffCreatePayload {
   title?: string
 }
 
+export interface StaffCreateResponse extends StaffMember {
+  temp_password?: string | null
+}
+
 export interface RoleUpdatePayload {
   role: UserRole
 }

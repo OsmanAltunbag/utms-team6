@@ -1902,6 +1902,8 @@ function CreateStaffModal({ onClose, onCreated }: { onClose: () => void; onCreat
   })
   const [loading, setLoading] = useState(false)
   const [programs, setPrograms] = useState<ProgramOption[]>([])
+  const [tempPassword, setTempPassword] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
     useEffect(() => {
         listPrograms().then(setPrograms).catch(() => {})
@@ -1911,18 +1913,30 @@ function CreateStaffModal({ onClose, onCreated }: { onClose: () => void; onCreat
     e.preventDefault()
     setLoading(true)
     try {
-      await createStaff({
+      const result = await createStaff({
         ...form,
         department: form.department || undefined,
         title: form.title || undefined,
       })
-      toast.success('Staff account created. Welcome email sent. The new staff member will appear after page refresh.')
-      onCreated()
-      onClose()
+      await onCreated()
+      if (result.temp_password) {
+        setTempPassword(result.temp_password)
+      } else {
+        toast.success('Staff account created. Welcome email sent.')
+        onClose()
+      }
     } catch (err: unknown) {
       toast.error(extractAdminError(err, 'Failed to create staff'))
     } finally {
       setLoading(false)
+    }
+  }
+
+  function handleCopy() {
+    if (tempPassword) {
+      navigator.clipboard.writeText(tempPassword)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
     }
   }
 
@@ -1937,6 +1951,46 @@ function CreateStaffModal({ onClose, onCreated }: { onClose: () => void; onCreat
           onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
         />
+      </div>
+    )
+  }
+
+  if (tempPassword) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Account Created</h2>
+          </div>
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+            <p className="text-sm text-green-800 font-medium mb-1">Staff account successfully created!</p>
+            <p className="text-xs text-green-700">Share the temporary password below with the new staff member. They must change it on first login.</p>
+          </div>
+          <div className="mb-2">
+            <label className="block text-xs text-gray-500 mb-1">Email</label>
+            <p className="text-sm font-medium text-gray-800">{form.email}</p>
+          </div>
+          <div className="mb-4">
+            <label className="block text-xs text-gray-500 mb-1">Temporary Password</label>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 bg-gray-100 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono text-gray-900 select-all">
+                {tempPassword}
+              </code>
+              <button
+                onClick={handleCopy}
+                className="px-3 py-2 bg-indigo-600 text-white text-xs rounded-lg hover:bg-indigo-700 transition-colors whitespace-nowrap"
+              >
+                {copied ? 'Copied!' : 'Copy'}
+              </button>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-full px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-700 transition-colors"
+          >
+            Done
+          </button>
+        </div>
       </div>
     )
   }

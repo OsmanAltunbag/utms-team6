@@ -1,6 +1,6 @@
 import axios from 'axios'
 import type {
-  StaffMember, StaffCreatePayload, RoleUpdatePayload,
+  StaffMember, StaffCreatePayload, StaffCreateResponse, RoleUpdatePayload,
   ApplicationPeriod, PeriodCreatePayload, PeriodExtendPayload, PeriodUpdatePayload,
   DepartmentCondition, ConditionCreatePayload, ConditionUpdatePayload,
 } from '../types/admin'
@@ -33,8 +33,8 @@ export async function listStaff(): Promise<StaffMember[]> {
   return data
 }
 
-export async function createStaff(payload: StaffCreatePayload): Promise<StaffMember> {
-  const { data } = await client.post<StaffMember>('/staff', payload)
+export async function createStaff(payload: StaffCreatePayload): Promise<StaffCreateResponse> {
+  const { data } = await client.post<StaffCreateResponse>('/staff', payload)
   return data
 }
 
