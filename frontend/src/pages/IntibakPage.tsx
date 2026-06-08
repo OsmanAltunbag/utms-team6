@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import {
   ArrowLeft, FileText, BookOpen, CheckCircle, RefreshCw,
-  Save, Send, Lightbulb, AlertTriangle,
+  Save, Send, Lightbulb, AlertTriangle, Eye, Plus,
 } from 'lucide-react'
 import { Sidebar } from '../components/Sidebar'
 import Spinner from '../components/Spinner'
@@ -121,6 +121,7 @@ export default function IntibakPage() {
 
   const [tableId, setTableId] = useState<string | null>(null)
   const [table, setTable] = useState<IntibakTable | null>(null)
+  const [transcriptDocId, setTranscriptDocId] = useState<string | null>(null)
   const [appDetail, setAppDetail] = useState<YGKEvaluationDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
@@ -140,6 +141,7 @@ export default function IntibakPage() {
       const t = await ensureIntibakTable(applicationId)
       setTableId(t.id)
       setTable(t)
+      setTranscriptDocId(t.transcript_document_id ?? null)
       setRows(t.mappings.map(mappingToRow))
       const detail = await getEvaluationDetail(t.application_id).catch(() => null)
       if (detail) setAppDetail(detail)
@@ -175,6 +177,26 @@ export default function IntibakPage() {
     } finally {
       setParsing(false)
     }
+  }
+
+  function handleAddBlankRow() {
+    setRows(prev => [...prev, {
+      mappingId: null,
+      sourceCourseCode: '',
+      sourceCourseName: '',
+      sourceCredits: 0,
+      sourceGrade: '',
+      sourceSemester: '',
+      targetCourseName: '',
+      targetCourseCode: '',
+      targetCredits: '',
+      equivalenceType: 'FULL',
+      notes: '',
+      saving: false,
+      saved: false,
+      suggestions: [],
+      showSuggestions: false,
+    }])
   }
 
   function updateRow(index: number, patch: Partial<MappingRowState>) {
@@ -345,26 +367,40 @@ export default function IntibakPage() {
             </div>
           </div>
 
-          {/* Parse Transcript */}
+          {/* Transcript */}
           <div className="bg-white rounded-lg shadow-sm p-6">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <FileText className="w-5 h-5 text-indigo-600" />
-                <h2 className="text-base font-semibold text-gray-900">Transcript Analysis</h2>
+                <h2 className="text-base font-semibold text-gray-900">Transcript</h2>
               </div>
-              <button
-                onClick={handleParseTranscript}
-                disabled={parsing || isSubmitted}
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-              >
-                {parsing ? <Spinner /> : <RefreshCw className="w-4 h-4" />}
-                {parsing ? 'Parsing…' : 'Parse Transcript'}
-              </button>
+              <div className="flex items-center gap-2">
+                {transcriptDocId && (
+                  <a
+                    href={`/api/documents/${transcriptDocId}/stream`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-4 py-2 bg-white border border-indigo-300 text-indigo-700 text-sm rounded-lg hover:bg-indigo-50 transition-colors"
+                  >
+                    <Eye className="w-4 h-4" />
+                    Open Transcript PDF
+                  </a>
+                )}
+                <button
+                  onClick={handleParseTranscript}
+                  disabled={parsing || isSubmitted}
+                  className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                >
+                  {parsing ? <Spinner /> : <RefreshCw className="w-4 h-4" />}
+                  {parsing ? 'Parsing…' : 'Auto-Parse (optional)'}
+                </button>
+              </div>
             </div>
 
             {parsedCourses.length === 0 ? (
               <p className="text-gray-400 text-sm">
-                Click "Parse Transcript" to extract courses from the student's uploaded transcript PDF.
+                Open the transcript PDF above to read courses, then add rows manually below —
+                or use "Auto-Parse" to attempt automatic extraction (may be incomplete).
               </p>
             ) : (
               <div className="overflow-x-auto">
@@ -401,16 +437,25 @@ export default function IntibakPage() {
             <div className="flex items-center gap-2 mb-4">
               <BookOpen className="w-5 h-5 text-indigo-600" />
               <h2 className="text-base font-semibold text-gray-900">Course Equivalence Mappings</h2>
-              <span className="ml-auto text-xs text-gray-400">
+              <span className="ml-auto text-xs text-gray-400 mr-2">
                 {rows.filter(r => r.saved).length} / {rows.length} saved
               </span>
+              {!isSubmitted && (
+                <button
+                  onClick={handleAddBlankRow}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add Row
+                </button>
+              )}
             </div>
 
             {rows.length === 0 ? (
               <div className="text-center py-10">
                 <BookOpen className="w-8 h-8 text-gray-200 mx-auto mb-2" />
                 <p className="text-gray-400 text-sm">
-                  No mappings yet. Parse the transcript to begin.
+                  No mappings yet. Open the transcript PDF above and click "Add Row" to begin.
                 </p>
               </div>
             ) : (
@@ -431,27 +476,63 @@ export default function IntibakPage() {
                     {rows.map((row, index) => (
                       <tr key={index} className="border-b border-gray-50 align-top">
 
-                        {/* Source course */}
+                        {/* Source course — read-only once saved (mappingId set), editable for new rows */}
                         <td className="px-3 py-3">
-                          <p className="font-medium text-gray-900 leading-tight">
-                            {row.sourceCourseName}
-                          </p>
-                          {row.sourceCourseCode && (
-                            <p className="font-mono text-xs text-gray-400 mt-0.5">
-                              {row.sourceCourseCode}
-                            </p>
-                          )}
-                          {row.sourceGrade && (
-                            <p className="text-xs text-gray-400 mt-0.5">
-                              Grade: {row.sourceGrade}
-                              {row.sourceSemester ? ` · ${row.sourceSemester}` : ''}
-                            </p>
+                          {row.mappingId ? (
+                            <>
+                              <p className="font-medium text-gray-900 leading-tight">
+                                {row.sourceCourseName || '—'}
+                              </p>
+                              {row.sourceCourseCode && (
+                                <p className="font-mono text-xs text-gray-400 mt-0.5">
+                                  {row.sourceCourseCode}
+                                </p>
+                              )}
+                              {row.sourceGrade && (
+                                <p className="text-xs text-gray-400 mt-0.5">
+                                  Grade: {row.sourceGrade}
+                                  {row.sourceSemester ? ` · ${row.sourceSemester}` : ''}
+                                </p>
+                              )}
+                            </>
+                          ) : (
+                            <div className="space-y-1">
+                              <input
+                                type="text"
+                                value={row.sourceCourseName}
+                                onChange={e => updateRow(index, { sourceCourseName: e.target.value, saved: false })}
+                                disabled={isSubmitted}
+                                placeholder="Source course name…"
+                                className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50"
+                              />
+                              <input
+                                type="text"
+                                value={row.sourceCourseCode}
+                                onChange={e => updateRow(index, { sourceCourseCode: e.target.value, saved: false })}
+                                disabled={isSubmitted}
+                                placeholder="Code (opt.)"
+                                className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50"
+                              />
+                            </div>
                           )}
                         </td>
 
-                        {/* Source credits */}
+                        {/* Source credits — editable for new rows */}
                         <td className="px-3 py-3 text-center text-gray-600">
-                          {row.sourceCredits}
+                          {row.mappingId ? (
+                            row.sourceCredits
+                          ) : (
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.5"
+                              value={row.sourceCredits || ''}
+                              onChange={e => updateRow(index, { sourceCredits: Number(e.target.value), saved: false })}
+                              disabled={isSubmitted}
+                              placeholder="0"
+                              className="w-14 border border-gray-300 rounded-lg px-2 py-1.5 text-xs text-center focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50"
+                            />
+                          )}
                         </td>
 
                         {/* Target course */}
@@ -604,7 +685,7 @@ export default function IntibakPage() {
                 </p>
               </div>
             </div>
-          ) : rows.length > 0 && (
+          ) : (
             <div className="bg-white rounded-lg shadow-sm p-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -615,14 +696,20 @@ export default function IntibakPage() {
                 </div>
                 <button
                   onClick={handleSubmit}
-                  disabled={submitting || unsavedCount > 0}
+                  disabled={submitting || unsavedCount > 0 || rows.length === 0}
                   className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm"
                 >
                   {submitting ? <Spinner /> : <Send className="w-4 h-4" />}
                   {submitting ? 'Submitting…' : 'Submit Table'}
                 </button>
               </div>
-              {unsavedCount > 0 && (
+              {rows.length === 0 && (
+                <p className="text-xs text-gray-400 mt-3 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  Add at least one course mapping before submitting.
+                </p>
+              )}
+              {rows.length > 0 && unsavedCount > 0 && (
                 <p className="text-xs text-amber-600 mt-3 flex items-center gap-1.5">
                   <AlertTriangle className="w-3.5 h-3.5" />
                   {unsavedCount} mapping{unsavedCount !== 1 ? 's have' : ' has'} unsaved changes.

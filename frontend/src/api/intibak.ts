@@ -1,7 +1,9 @@
 import axios from 'axios'
 
+const _base = import.meta.env.VITE_API_BASE_URL ?? ''
+
 const client = axios.create({
-  baseURL: '/api/ygk',
+  baseURL: `${_base}/api/ygk`,
   withCredentials: true,
   timeout: 15000,
   headers: { 'Content-Type': 'application/json' },
@@ -18,7 +20,7 @@ client.interceptors.response.use(
       try {
         if (!_refreshing) {
           _refreshing = axios
-            .post('/api/auth/refresh', {}, { withCredentials: true })
+            .post(`${_base}/api/auth/refresh`, {}, { withCredentials: true })
             .then(() => { _refreshing = null })
             .catch((e) => { _refreshing = null; throw e })
         }
@@ -58,6 +60,7 @@ export interface IntibakTable {
   id: string
   application_id: string
   status: string
+  transcript_document_id: string | null
   mappings: CourseMapping[]
 }
 
@@ -108,6 +111,7 @@ function normalizeIntibakTable(data: Record<string, unknown>): IntibakTable {
     id: String(data.id),
     application_id: String(data.application_id),
     status: String(data.status),
+    transcript_document_id: (data.transcript_document_id as string | null) ?? null,
     mappings: rawMappings.map(normalizeMapping),
   }
 }

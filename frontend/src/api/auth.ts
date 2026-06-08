@@ -1,8 +1,10 @@
 import axios, { AxiosError } from 'axios'
 import type { TokenResponse, MeResponse, ApiError } from '../types/auth'
 
+const _base = import.meta.env.VITE_API_BASE_URL ?? ''
+
 const client = axios.create({
-  baseURL: '/api',
+  baseURL: `${_base}/api`,
   withCredentials: true, // send HttpOnly cookies automatically
   headers: { 'Content-Type': 'application/json' },
 })

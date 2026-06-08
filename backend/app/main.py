@@ -16,6 +16,7 @@ from app.api.qa import router as qa_router
 from app.api.ranking import router as ranking_router
 from app.api.student_affairs import router as student_affairs_router
 from app.api.ydyo import router as ydyo_router
+from app.core.config import settings
 from app.core.redis import close_redis
 
 
@@ -31,9 +32,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_cors_origins = list({
+    "http://localhost:5173",
+    settings.FRONTEND_URL,
+})
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite dev server
+    allow_origins=_cors_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",  # Vercel preview deploys
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

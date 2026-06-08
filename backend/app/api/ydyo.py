@@ -21,8 +21,9 @@ _require_ydyo = require_role(UserRole.YDYO, UserRole.SYSTEM_ADMIN)
 
 
 class ApproveEnglishRequest(BaseModel):
-    exam_type: str
-    exam_score: float
+    exam_type: Optional[str] = None
+    exam_score: Optional[float] = None
+    notes: Optional[str] = None
 
 
 class RejectEnglishRequest(BaseModel):
@@ -201,7 +202,7 @@ async def approve_english(
 ):
     svc = EnglishProficiencyService(db)
     review = await svc.approve(
-        application_id, current_user.id, body.exam_type, body.exam_score
+        application_id, current_user.id, body.exam_type, body.exam_score, notes=body.notes
     )
     return {
         "application_id": str(review.application_id),

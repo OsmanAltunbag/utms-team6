@@ -167,30 +167,28 @@ function ApplicationCard({
   onAfterAction: () => void
 }) {
   const [notes, setNotes] = useState('')
-  const [showCert, setShowCert] = useState(false)
   const [busy, setBusy] = useState<null | 'approve' | 'reject'>(null)
 
   const cert = app.certificate
+  // Informational only — never block the decision buttons
   const examTypeCode = cert?.extracted_data?.exam_type ?? app.english_review?.exam_type ?? null
-  const scoreVal =
-    cert?.extracted_data?.score ?? app.english_review?.exam_score ?? null
-  const expires = cert?.extracted_data?.expires_on ?? null
-  const expired = !!expires && new Date(expires) < new Date()
+  const scoreVal = cert?.extracted_data?.score ?? app.english_review?.exam_score ?? null
 
   const reviewApproved = app.english_review?.approved
   const mustTakeExam = app.english_review?.must_take_exam === true && reviewApproved == null
   const isPending =
     reviewApproved == null && !mustTakeExam && app.status === 'ENGLISH_REVIEW'
 
+  function openCertPdf() {
+    if (!cert) return
+    window.open(`/api/documents/${cert.id}/stream`, '_blank', 'noopener,noreferrer')
+  }
+
   async function handleApprove() {
-    if (!examTypeCode || scoreVal == null) {
-      toast.error('Missing exam type or score on the certificate.')
-      return
-    }
     setBusy('approve')
     try {
-      await approveEnglish(app.id, examTypeCode, Number(scoreVal))
-      toast.success('English proficiency approved. Application routed to Department Evaluation.')
+      await approveEnglish(app.id, notes || undefined, examTypeCode ?? undefined, scoreVal != null ? Number(scoreVal) : undefined)
+      toast.success('English proficiency approved. Application routed to Dean\'s Office.')
       onAfterAction()
     } catch (err) {
       toast.error(extractErrorMessage(err))
@@ -202,10 +200,7 @@ function ApplicationCard({
   async function handleMustTakeExam() {
     setBusy('reject')
     try {
-      const certNote = expired
-        ? 'Certificate expired.'
-        : `Score below YDYO threshold (required ${requiredFor(examTypeCode)}).`
-      await routeToExam(app.id, notes || certNote)
+      await routeToExam(app.id, notes || 'Certificate insufficient — routed to YDYO proficiency exam.')
       toast.success('Routed to YDYO proficiency exam. Applicant will be notified.')
       onAfterAction()
     } catch (err) {
@@ -239,32 +234,19 @@ function ApplicationCard({
 
       {/* Cert links */}
       {cert ? (
-        <>
-          <div className="flex items-center gap-2 text-sm text-emerald-700 mb-2">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2 text-sm text-emerald-700">
             <CheckCircle className="w-4 h-4" />
-            <span>Language certificate uploaded</span>
+            <span>{cert.file_name ?? 'Language certificate uploaded'}</span>
           </div>
           <button
-            onClick={() => setShowCert((v) => !v)}
-            className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-800 mb-4"
+            onClick={openCertPdf}
+            className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-800 font-medium"
           >
             <Eye className="w-4 h-4" />
-            View Certificate Details
+            Open Certificate PDF
           </button>
-          {showCert && cert.extracted_data && (
-            <div className="bg-gray-50 rounded-lg p-4 mb-4 text-xs grid grid-cols-2 gap-y-1 gap-x-6">
-              <div><span className="text-gray-500">File:</span> <span className="font-medium">{cert.file_name ?? '—'}</span></div>
-              <div><span className="text-gray-500">Exam:</span> <span className="font-medium">{examLabel(cert.extracted_data.exam_type)}</span></div>
-              <div><span className="text-gray-500">Score:</span> <span className="font-medium">{cert.extracted_data.score ?? '—'}</span></div>
-              <div><span className="text-gray-500">Issued:</span> <span className="font-medium">{cert.extracted_data.issued_on ?? '—'}</span></div>
-              <div>
-                <span className="text-gray-500">Expires:</span>{' '}
-                <span className={`font-medium ${expired ? 'text-rose-600' : ''}`}>{cert.extracted_data.expires_on ?? '—'}</span>
-                {expired && <span className="ml-2 text-[10px] text-rose-600 font-semibold">(expired)</span>}
-              </div>
-            </div>
-          )}
-        </>
+        </div>
       ) : (
         <div className="flex items-center gap-2 text-sm text-amber-700 mb-4">
           <XCircle className="w-4 h-4" />

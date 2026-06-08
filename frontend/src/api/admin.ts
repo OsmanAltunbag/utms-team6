@@ -5,8 +5,10 @@ import type {
   DepartmentCondition, ConditionCreatePayload, ConditionUpdatePayload,
 } from '../types/admin'
 
+const _base = import.meta.env.VITE_API_BASE_URL ?? ''
+
 const client = axios.create({
-  baseURL: '/api/admin',
+  baseURL: `${_base}/api/admin`,
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 })
@@ -18,7 +20,7 @@ client.interceptors.response.use(
     if (error.response?.status === 401 && !original._retry) {
       original._retry = true
       try {
-        await axios.post('/api/auth/refresh', {}, { withCredentials: true })
+        await axios.post(`${_base}/api/auth/refresh`, {}, { withCredentials: true })
         return client(original)
       } catch {
         window.location.href = '/login'

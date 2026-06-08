@@ -35,23 +35,20 @@ sys.path.insert(0, _BACKEND)
 
 from passlib.context import CryptContext
 from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
+from scripts._engine import make_session_factory
 
 from app.domain.academic_record import AcademicRecord
 from app.domain.application import Application
 from app.domain.audit import AuditLog
-from app.domain.enums import AppStatus, UserRole
+from app.domain.document import Document
+from app.domain.enums import AppStatus, DocStatus, DocType, UserRole
 from app.domain.period import ApplicationPeriod
 from app.domain.program import Program
 from app.domain.user import Applicant, User
 
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql+asyncpg://utms:utms@localhost:5432/utms"
-)
-if DATABASE_URL.startswith("postgresql://"):
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 SHARED_PASSWORD = "Test1234!"
 PERIOD_LABEL = "2025-2026 Spring"
@@ -230,6 +227,29 @@ async def _upsert_application(
         rec.institution = spec["institution"]
         rec.gpa_4 = spec["gpa_4"]
     await db.flush()
+
+    # Stub TRANSCRIPT document — required for intibak table creation (UC-04-02).
+    # The file_path points to a placeholder object key; no real PDF is needed for
+    # backend logic tests (intibak create_table only checks doc existence).
+    existing_transcript = await db.scalar(
+        select(Document).where(
+            Document.application_id == app.id,
+            Document.doc_type == DocType.TRANSCRIPT,
+        )
+    )
+    if existing_transcript is None:
+        db.add(
+            Document(
+                application_id=app.id,
+                doc_type=DocType.TRANSCRIPT,
+                file_path=f"applications/{app.id}/transcript_stub.pdf",
+                file_name="transcript_stub.pdf",
+                file_size_bytes=0,
+                status=DocStatus.ACCEPTED,
+            )
+        )
+        await db.flush()
+
     return app
 
 
@@ -321,8 +341,7 @@ async def seed(db: AsyncSession) -> None:
 
 
 async def main() -> None:
-    engine = create_async_engine(DATABASE_URL, echo=False)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    engine, factory = make_session_factory()
     async with factory() as session:
         try:
             await seed(session)
