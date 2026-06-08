@@ -47,8 +47,15 @@ def _smtp_send(to_address: str, subject: str, html_body: str) -> None:
 
 
 def _brevo_api_send(to_address: str, subject: str, html_body: str) -> None:
-    import httpx
-    sender_email = settings.SMTP_USERNAME or "noreply@iyte.edu.tr"
+    import re, httpx
+    # Parse "Name <email>" or plain "email" from FROM_EMAIL setting
+    from_raw = settings.FROM_EMAIL or "UTMS <noreply@iyte.edu.tr>"
+    match = re.match(r"^(.*?)\s*<(.+?)>\s*$", from_raw)
+    if match:
+        sender_name, sender_email = match.group(1).strip() or "UTMS", match.group(2)
+    else:
+        sender_name, sender_email = "UTMS", from_raw.strip()
+
     response = httpx.post(
         "https://api.brevo.com/v3/smtp/email",
         headers={
@@ -57,7 +64,7 @@ def _brevo_api_send(to_address: str, subject: str, html_body: str) -> None:
             "content-type": "application/json",
         },
         json={
-            "sender": {"name": "UTMS", "email": sender_email},
+            "sender": {"name": sender_name, "email": sender_email},
             "to": [{"email": to_address}],
             "subject": subject,
             "htmlContent": html_body,
