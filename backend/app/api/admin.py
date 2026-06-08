@@ -19,6 +19,7 @@ from app.schemas.admin import (
     PeriodResponse,
     RoleUpdateRequest,
     StaffCreateRequest,
+    StaffCreateResponse,
     StaffResponse,
 )
 from app.services.admin_service import AdminService, DepartmentConditionService
@@ -85,16 +86,17 @@ async def list_staff(
     return [_staff_to_response(s) for s in staff_list]
 
 
-@router.post("/staff", response_model=StaffResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/staff", response_model=StaffCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_staff(
     payload: StaffCreateRequest,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(_require_admin),
     db: AsyncSession = Depends(get_db),
-) -> StaffResponse:
+) -> StaffCreateResponse:
     svc = AdminService(db)
-    staff, _ = await svc.create_staff(payload, current_user.id, background_tasks)
-    return _staff_to_response(staff)
+    staff, temp_password = await svc.create_staff(payload, current_user.id, background_tasks)
+    response = _staff_to_response(staff)
+    return StaffCreateResponse(**response.model_dump(), temp_password=temp_password)
 
 
 @router.patch("/staff/{staff_id}/role", response_model=StaffResponse)

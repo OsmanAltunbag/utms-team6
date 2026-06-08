@@ -34,6 +34,10 @@ class StaffResponse(BaseModel):
     created_at: datetime
 
 
+class StaffCreateResponse(StaffResponse):
+    temp_password: Optional[str] = None
+
+
 # --- SPEC-018: Application Period schemas ---
 
 class PeriodCreateRequest(BaseModel):
