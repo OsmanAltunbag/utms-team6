@@ -47,9 +47,9 @@ def _smtp_send(to_address: str, subject: str, html_body: str) -> None:
 
 
 def _brevo_api_send(to_address: str, subject: str, html_body: str) -> None:
-    import requests
+    import httpx
     sender_email = settings.SMTP_USERNAME or "noreply@iyte.edu.tr"
-    response = requests.post(
+    response = httpx.post(
         "https://api.brevo.com/v3/smtp/email",
         headers={
             "accept": "application/json",
