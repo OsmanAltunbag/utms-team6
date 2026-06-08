@@ -26,12 +26,6 @@ To act on them, log in as the YDYO officer seeded by seed_test_roles.py:
 Run inside the backend container:
 
     docker compose exec backend python -m scripts.seed_uc_05_01_english_review
-
-If the file isn't in the image yet (only backend/app is bind-mounted),
-copy it in first:
-
-    docker compose cp backend/scripts/seed_uc_05_01_english_review.py \\
-                     backend:/app/scripts/seed_uc_05_01_english_review.py
 """
 
 import asyncio
@@ -40,8 +34,9 @@ import sys
 import uuid
 from datetime import date, datetime, timezone
 
-# Allow `python -m scripts.seed_uc_05_01_english_review` from /app
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_BACKEND = _ROOT if os.path.isdir(os.path.join(_ROOT, "app")) else os.path.join(_ROOT, "backend")
+sys.path.insert(0, _BACKEND)
 
 from passlib.context import CryptContext
 from sqlalchemy import select
