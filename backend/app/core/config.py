@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     # MinIO
     MINIO_ENDPOINT: str = "localhost:9000"
+    MINIO_PUBLIC_ENDPOINT: str = ""  # browser-facing address for presigned URLs; falls back to MINIO_ENDPOINT
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin"
     MINIO_BUCKET: str = "utms-documents"
@@ -39,13 +40,14 @@ class Settings(BaseSettings):
     APP_BASE_URL: str = "http://localhost:5173"
     FRONTEND_URL: str = "http://localhost:5173"
 
-    # Email — Mailpit in local dev; Gmail SMTP in production
+    # Email — Mailpit in local dev; Brevo HTTP API in production
     SMTP_SERVER: str = "mailpit"
     SMTP_PORT: int = 1025
     SMTP_USE_TLS: bool = False
     SMTP_USERNAME: str = ""
     SMTP_PASSWORD: str = ""
     FROM_EMAIL: str = "UTMS <noreply@iyte.edu.tr>"
+    BREVO_API_KEY: str = ""
 
 
 settings = Settings()

@@ -21,11 +21,6 @@ Each applicant uses:
 
 Run inside the backend container:
     docker compose exec backend python -m scripts.seed_uc_06_01_dean_review
-
-If the file is not yet in the image (only backend/app is bind-mounted),
-copy it in first:
-    docker compose cp backend/scripts/seed_uc_06_01_dean_review.py \\
-                     backend:/app/scripts/seed_uc_06_01_dean_review.py
 """
 import asyncio
 import os
@@ -34,7 +29,9 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_BACKEND = _ROOT if os.path.isdir(os.path.join(_ROOT, "app")) else os.path.join(_ROOT, "backend")
+sys.path.insert(0, _BACKEND)
 
 from passlib.context import CryptContext
 from sqlalchemy import delete, select

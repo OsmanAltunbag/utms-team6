@@ -3,12 +3,17 @@ Seed script — UC-03-02 (Notify Transfer Results)
 Creates an APPROVED ranking ready for publication testing.
 
 Run inside the backend container:
-  docker exec utms-team6-backend-1 python /scripts/seed_ranking_for_notify.py
+  docker compose exec backend python -m scripts.seed_ranking_for_notify
 """
 
 import asyncio
+import os
 import sys
 import uuid
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_BACKEND = _ROOT if os.path.isdir(os.path.join(_ROOT, "app")) else os.path.join(_ROOT, "backend")
+sys.path.insert(0, _BACKEND)
 from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
 

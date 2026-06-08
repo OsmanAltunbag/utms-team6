@@ -19,8 +19,9 @@ import sys
 import uuid
 from datetime import date
 
-# Allow running as `python -m scripts.seed_test_roles` from backend/
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_BACKEND = _ROOT if os.path.isdir(os.path.join(_ROOT, "app")) else os.path.join(_ROOT, "backend")
+sys.path.insert(0, _BACKEND)
 
 from passlib.context import CryptContext
 from sqlalchemy import select

@@ -1,10 +1,12 @@
 """
 Seed script — populates the database with default programs and a test system admin.
-Run from the backend/ directory:
+Run inside the backend container:
+
+    docker compose exec backend python -m scripts.seed
+
+Or locally from the project root (requires DATABASE_URL):
 
     python -m scripts.seed
-
-Requires DATABASE_URL env var (or .env file).
 """
 
 import asyncio
@@ -13,8 +15,9 @@ import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 
-# Allow running as `python -m scripts.seed` from backend/
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_BACKEND = _ROOT if os.path.isdir(os.path.join(_ROOT, "app")) else os.path.join(_ROOT, "backend")
+sys.path.insert(0, _BACKEND)
 
 from passlib.context import CryptContext
 from sqlalchemy import select
