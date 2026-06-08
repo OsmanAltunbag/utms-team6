@@ -173,8 +173,6 @@ function ApplicationCard({
   // Informational only — never block the decision buttons
   const examTypeCode = cert?.extracted_data?.exam_type ?? app.english_review?.exam_type ?? null
   const scoreVal = cert?.extracted_data?.score ?? app.english_review?.exam_score ?? null
-  const expires = cert?.extracted_data?.expires_on ?? null
-  const expired = !!expires && new Date(expires) < new Date()
 
   const reviewApproved = app.english_review?.approved
   const mustTakeExam = app.english_review?.must_take_exam === true && reviewApproved == null
