@@ -37,7 +37,7 @@ def _normalize(text: str) -> str:
 _REQUIRED_FIELDS: dict[DocType, list[str]] = {
     DocType.TRANSCRIPT:    ["gpa", "completed_credits", "total_credits", "institution"],
     DocType.YKS_RESULT:   ["score", "score_type", "exam_year"],
-    DocType.LANGUAGE_CERT: ["certificate_type", "score", "validity_date"],
+    DocType.LANGUAGE_CERT: ["exam_type", "score", "expires_on"],
     DocType.ID_COPY:       ["national_id_verified"],
 }
 
@@ -164,13 +164,21 @@ def _extract_yks(text: str) -> dict[str, Any]:
 def _extract_language_cert(text: str) -> dict[str, Any]:
     result: dict[str, Any] = {}
 
+    # Exam type — stored as "exam_type" to match the frontend schema.
+    # YÖKDİL / YOKDIL both accepted (pypdf may strip diacritics).
     cert_m = _first([
         r"\b(TOEFL\s*iBT|TOEFL\s*PBT|TOEFL)\b",
         r"\b(IELTS\s*Academic|IELTS\s*General|IELTS)\b",
-        r"\b(YDS|YÖKDİL|COPE|CPE|FCE|CAE|PTE)\b",
+        r"\b(YDS)\b",
+        r"\b(YO[Kk]D[Iİ]L)\b",
+        r"\b(COPE|CPE|FCE|CAE|PTE)\b",
     ], text, flags=re.IGNORECASE)
     if cert_m:
-        result["certificate_type"] = cert_m.group(1).strip()
+        raw = cert_m.group(1).strip().upper()
+        # Normalise YOKDIL variants → canonical key used in REQUIRED_SCORE
+        if re.match(r"YO[K]?D[I]L", raw, re.IGNORECASE):
+            raw = "YOKDIL"
+        result["exam_type"] = raw
 
     score_m = _first([
         r"(?:Total Score|Overall Score|Toplam Puan|Overall Band Score|Band Score|Score|Puan)"
@@ -180,13 +188,23 @@ def _extract_language_cert(text: str) -> dict[str, Any]:
         val = _to_float(score_m.group(1))
         result["score"] = int(val) if val == int(val) else round(val, 1)
 
-    date_m = _first([
+    # Issue date (when the certificate was granted)
+    issued_m = _first([
+        r"(?:Issue Date|Date of Issue|Sınav Tarihi|Belge Tarihi|Tarih)[:\s]+"
+        r"(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})",
+        r"(?:Issue Date|Date of Issue|Sınav Tarihi|Belge Tarihi|Tarih)[:\s]+(\d{4}-\d{2}-\d{2})",
+    ], text)
+    if issued_m:
+        result["issued_on"] = issued_m.group(1).strip()
+
+    # Expiry / validity date
+    expiry_m = _first([
         r"(?:Valid Until|Expiry Date|Geçerlilik Tarihi)[:\s]+"
         r"(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})",
         r"(?:Valid Until|Expiry Date|Geçerlilik Tarihi)[:\s]+(\d{4}-\d{2}-\d{2})",
     ], text)
-    if date_m:
-        result["validity_date"] = date_m.group(1).strip()
+    if expiry_m:
+        result["expires_on"] = expiry_m.group(1).strip()
 
     return result
 

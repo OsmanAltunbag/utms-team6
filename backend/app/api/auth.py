@@ -21,7 +21,11 @@ from app.services.registration_service import RegistrationService
 
 router = APIRouter()
 
-_COOKIE_SECURE = settings.APP_ENV == "production"
+_IS_PROD = settings.APP_ENV == "production"
+# Cross-origin (Vercel ↔ Fly.io) requires SameSite=None + Secure.
+# In local dev both frontend and backend are on localhost → SameSite=Lax is enough.
+_COOKIE_SAMESITE = "none" if _IS_PROD else "lax"
+_COOKIE_SECURE = _IS_PROD  # SameSite=None mandates Secure=True
 
 
 def _set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
@@ -30,7 +34,7 @@ def _set_auth_cookies(response: Response, access_token: str, refresh_token: str)
         value=access_token,
         httponly=True,
         secure=_COOKIE_SECURE,
-        samesite="strict",
+        samesite=_COOKIE_SAMESITE,
         max_age=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/",
     )
@@ -39,7 +43,7 @@ def _set_auth_cookies(response: Response, access_token: str, refresh_token: str)
         value=refresh_token,
         httponly=True,
         secure=_COOKIE_SECURE,
-        samesite="strict",
+        samesite=_COOKIE_SAMESITE,
         max_age=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400,
         path="/api/auth/refresh",
     )

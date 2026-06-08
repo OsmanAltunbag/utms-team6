@@ -17,7 +17,7 @@ from decimal import Decimal
 
 from app.core.storage import MinIOClient
 from app.domain.audit import AuditLog
-from app.domain.enums import AppStatus, IntibakStatus, RankStatus
+from app.domain.enums import AppStatus, DocStatus, DocType, IntibakStatus, RankStatus
 from app.domain.intibak import CourseMapping, IntibakTable
 from app.repositories.application_repository import ApplicationRepository
 
@@ -36,7 +36,15 @@ class IntibakService:
         if app is None:
             raise HTTPException(status_code=404, detail="Application not found")
 
-        if app.academic_record is None or not app.documents:
+        transcript_doc = next(
+            (
+                d for d in app.documents
+                if d.doc_type == DocType.TRANSCRIPT
+                and d.status in (DocStatus.ACCEPTED, DocStatus.PENDING)
+            ),
+            None,
+        )
+        if transcript_doc is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Missing transcript data — cannot create intibak table",

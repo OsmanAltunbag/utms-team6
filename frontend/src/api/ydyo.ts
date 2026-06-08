@@ -1,7 +1,9 @@
 import axios from 'axios'
 
+const _base = import.meta.env.VITE_API_BASE_URL ?? ''
+
 const client = axios.create({
-  baseURL: '/api/ydyo',
+  baseURL: `${_base}/api/ydyo`,
   withCredentials: true,
   timeout: 15000,
   headers: { 'Content-Type': 'application/json' },
@@ -18,7 +20,7 @@ client.interceptors.response.use(
       try {
         if (!_refreshing) {
           _refreshing = axios
-            .post('/api/auth/refresh', {}, { withCredentials: true })
+            .post(`${_base}/api/auth/refresh`, {}, { withCredentials: true })
             .then(() => { _refreshing = null })
             .catch((e) => { _refreshing = null; throw e })
         }
@@ -130,12 +132,14 @@ export async function getYdyoApplication(id: string): Promise<YdyoApplicationDet
 
 export async function approveEnglish(
   id: string,
-  exam_type: string,
-  exam_score: number,
+  notes?: string,
+  exam_type?: string,
+  exam_score?: number,
 ): Promise<{ application_id: string; approved: boolean; exam_type: string | null; exam_score: number | null }> {
   const { data } = await client.post(`/applications/${id}/approve-english`, {
-    exam_type,
-    exam_score,
+    notes: notes || null,
+    exam_type: exam_type || null,
+    exam_score: exam_score ?? null,
   })
   return data
 }

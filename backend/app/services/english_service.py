@@ -54,8 +54,9 @@ class EnglishProficiencyService:
         self,
         application_id: uuid.UUID,
         reviewer_id: uuid.UUID,
-        exam_type: str,
-        exam_score: float,
+        exam_type: Optional[str] = None,
+        exam_score: Optional[float] = None,
+        notes: Optional[str] = None,
     ) -> EnglishProficiencyReview:
         app = await self._app_repo.get_by_id(application_id)
         if app is None:
@@ -75,7 +76,8 @@ class EnglishProficiencyService:
         review.reviewer_id = reviewer_id
         review.approved = True
         review.exam_type = exam_type
-        review.exam_score = Decimal(str(exam_score))
+        review.exam_score = Decimal(str(exam_score)) if exam_score is not None else None
+        review.notes = notes
         review.reviewed_at = datetime.now(timezone.utc)
         await self.db.flush()
 

@@ -18,7 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from passlib.context import CryptContext
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
+from scripts._engine import make_session_factory
 
 from app.domain.enums import UserRole
 from app.domain.period import ApplicationPeriod
@@ -27,11 +28,6 @@ from app.domain.user import Applicant, Staff, User
 
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql+asyncpg://utms:utms@localhost:5432/utms"
-)
-if DATABASE_URL.startswith("postgresql://"):
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 DEFAULT_PROGRAMS = [
     {
@@ -180,8 +176,7 @@ async def main() -> None:
     print("UTMS Seed Script")
     print("================")
 
-    engine = create_async_engine(DATABASE_URL, echo=False)
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    engine, session_factory = make_session_factory()
 
     async with session_factory() as session:
         await seed(session)

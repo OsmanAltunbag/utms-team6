@@ -7,8 +7,10 @@ import type {
   RejectionReasonCode,
 } from '../types/staff'
 
+const _base = import.meta.env.VITE_API_BASE_URL ?? ''
+
 const client = axios.create({
-  baseURL: '/api/staff',
+  baseURL: `${_base}/api/staff`,
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 })
@@ -24,7 +26,7 @@ client.interceptors.response.use(
       try {
         if (!_refreshing) {
           _refreshing = axios
-            .post('/api/auth/refresh', {}, { withCredentials: true })
+            .post(`${_base}/api/auth/refresh`, {}, { withCredentials: true })
             .then(() => { _refreshing = null })
             .catch((e) => { _refreshing = null; throw e })
         }

@@ -163,8 +163,8 @@ class EligibilityEngine:
 
         if all_passed:
             await self._app_svc.change_status(
-                application_id, AppStatus.DEPT_EVAL, evaluator_id,
-                "Department conditions confirmed by YGK",
+                application_id, AppStatus.ENGLISH_REVIEW, evaluator_id,
+                "Department conditions confirmed by YGK — routing to English proficiency review",
             )
         else:
             rejection_note = (
