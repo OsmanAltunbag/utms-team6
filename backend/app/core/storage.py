@@ -16,13 +16,23 @@ class MinIOClient:
         )
         self._bucket = settings.MINIO_BUCKET
 
+    def _public_client(self) -> Minio:
+        """Client using the browser-reachable endpoint for presigned URL generation."""
+        endpoint = settings.MINIO_PUBLIC_ENDPOINT or settings.MINIO_ENDPOINT
+        return Minio(
+            endpoint,
+            access_key=settings.MINIO_ACCESS_KEY,
+            secret_key=settings.MINIO_SECRET_KEY,
+            secure=settings.MINIO_SECURE,
+        )
+
     def generate_presigned_put(self, object_key: str, ttl: int = 300) -> str:
-        return self._client.presigned_put_object(
+        return self._public_client().presigned_put_object(
             self._bucket, object_key, expires=timedelta(seconds=ttl)
         )
 
     def generate_presigned_get(self, object_key: str, ttl: int = 300) -> str:
-        return self._client.presigned_get_object(
+        return self._public_client().presigned_get_object(
             self._bucket, object_key, expires=timedelta(seconds=ttl)
         )
 
