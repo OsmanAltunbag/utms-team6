@@ -87,6 +87,9 @@ class OfficerApplicationService:
         await self._app_svc.change_status(
             application_id, AppStatus.UNDER_REVIEW, officer_id, "Documents verified"
         )
+        await self._app_svc.change_status(
+            application_id, AppStatus.ENGLISH_REVIEW, officer_id, "Routed to YDYO for English proficiency review"
+        )
 
         log = AuditLog(
             actor_id=officer_id,
@@ -94,7 +97,7 @@ class OfficerApplicationService:
             entity_type="Application",
             entity_id=application_id,
             old_value={"status": old_status},
-            new_value={"status": AppStatus.UNDER_REVIEW.value},
+            new_value={"status": AppStatus.ENGLISH_REVIEW.value},
         )
         self.db.add(log)
         await self.db.flush()
@@ -102,8 +105,8 @@ class OfficerApplicationService:
         await self._enqueue_status_notification(
             app,
             old_status=old_status,
-            new_status=AppStatus.UNDER_REVIEW.value,
-            note="Belgeleriniz doğrulandı.",
+            new_status=AppStatus.ENGLISH_REVIEW.value,
+            note="Belgeleriniz doğrulandı. Başvurunuz İngilizce yeterlilik incelemesine yönlendirildi.",
         )
         return await self._app_repo.get_by_id(application_id)  # type: ignore[return-value]
 
