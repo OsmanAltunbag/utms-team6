@@ -632,7 +632,7 @@ function DeptConditionsSection({
 
       {requirements.length === 0 ? (
         <p className="text-gray-400 text-sm">
-          No department conditions configured for this program.
+          No department conditions configured for this program. You may confirm directly.
         </p>
       ) : (
         <>
@@ -771,38 +771,38 @@ function DeptConditionsSection({
               />
             </div>
           )}
-
-          {/* Confirm All Conditions button */}
-          {!isReadOnly && (
-            <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
-              <button
-                onClick={handleConfirmAll}
-                disabled={submitting || (anyNotMet && !rejectionNote.trim())}
-                className={`flex items-center gap-2 px-5 py-2.5 text-white text-sm font-semibold rounded-lg disabled:opacity-50 transition-colors shadow-sm ${
-                  anyNotMet ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'
-                }`}
-              >
-                {submitting ? (
-                  <Spinner />
-                ) : anyNotMet ? (
-                  <XCircle className="w-4 h-4" />
-                ) : (
-                  <CheckCircle className="w-4 h-4" />
-                )}
-                {submitting
-                  ? 'Submitting…'
-                  : anyNotMet
-                  ? 'Confirm & Reject Application'
-                  : 'Confirm All Conditions'}
-              </button>
-              {anyNotMet && !rejectionNote.trim() && (
-                <p className="text-xs text-red-500">
-                  Rejection justification required before submitting.
-                </p>
-              )}
-            </div>
-          )}
         </>
+      )}
+
+      {/* Confirm All Conditions button — rendered regardless of requirement count */}
+      {!isReadOnly && (
+        <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
+          <button
+            onClick={handleConfirmAll}
+            disabled={submitting || (anyNotMet && !rejectionNote.trim())}
+            className={`flex items-center gap-2 px-5 py-2.5 text-white text-sm font-semibold rounded-lg disabled:opacity-50 transition-colors shadow-sm ${
+              anyNotMet ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'
+            }`}
+          >
+            {submitting ? (
+              <Spinner />
+            ) : anyNotMet ? (
+              <XCircle className="w-4 h-4" />
+            ) : (
+              <CheckCircle className="w-4 h-4" />
+            )}
+            {submitting
+              ? 'Submitting…'
+              : anyNotMet
+              ? 'Confirm & Reject Application'
+              : 'Confirm All Conditions'}
+          </button>
+          {anyNotMet && !rejectionNote.trim() && (
+            <p className="text-xs text-red-500">
+              Rejection justification required before submitting.
+            </p>
+          )}
+        </div>
       )}
     </div>
   )
