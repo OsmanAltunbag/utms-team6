@@ -85,7 +85,7 @@ class NotificationService:
     def _dispatch(notification_id: uuid.UUID) -> None:
         try:
             from app.workers.notification_tasks import send_notification
-            send_notification.delay(str(notification_id))
+            send_notification.apply_async(args=[str(notification_id)], countdown=5)
         except Exception:
             logger.warning(
                 "Failed to enqueue notification task for %s", notification_id, exc_info=True

@@ -84,10 +84,10 @@ class EvaluationService:
         app = await self._app_repo.get_by_id(application_id)
         if app is None:
             raise HTTPException(status_code=404, detail="Application not found")
-        if app.status != AppStatus.UNDER_REVIEW:
+        if app.status not in (AppStatus.UNDER_REVIEW, AppStatus.RANKING):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Expected UNDER_REVIEW, got {app.status.value}",
+                detail=f"Expected UNDER_REVIEW or RANKING, got {app.status.value}",
             )
 
         record = app.academic_record
@@ -122,15 +122,12 @@ class EvaluationService:
         self.db.add(log)
         await self.db.flush()
 
-        # Status stays UNDER_REVIEW — dept conditions must be confirmed next
-        # (UNDER_REVIEW → ENGLISH_REVIEW is done by EligibilityEngine after dept eval)
-
         await self.db.commit()
 
         try:
             from app.core.redis import publish_status_change
             await asyncio.wait_for(
-                publish_status_change(str(app.id), AppStatus.UNDER_REVIEW.value),
+                publish_status_change(str(app.id), app.status.value),
                 timeout=1.0,
             )
         except Exception:
