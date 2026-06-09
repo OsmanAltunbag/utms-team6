@@ -64,7 +64,7 @@ class RankingService:
             .where(
                 Application.program_id == program_id,
                 Application.period_id == period_id,
-                Application.status == AppStatus.DEPT_EVAL,
+                Application.status == AppStatus.DEAN_APPROVED,
             )
         )
         apps = list(apps_result.scalars().all())
@@ -175,13 +175,7 @@ class RankingService:
         ranking.approved_at = datetime.now(timezone.utc)
         await self.db.flush()
 
-        for entry in ranking.entries:
-            app = await self._app_repo.get_by_id(entry.application_id)
-            if app and app.status == AppStatus.DEPT_EVAL:
-                await self._app_svc.change_status(
-                    entry.application_id, AppStatus.RANKING, approver_id,
-                    "Ranking approved"
-                )
+        # Applications stay in DEAN_APPROVED — Student Affairs will announce them
 
         log = AuditLog(
             actor_id=approver_id,

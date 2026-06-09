@@ -64,7 +64,7 @@ async def list_applications_for_ygk(
     if status:
         q = q.where(Application.status == status)
     else:
-        q = q.where(Application.status.in_([AppStatus.UNDER_REVIEW, AppStatus.DEPT_EVAL]))
+        q = q.where(Application.status.in_([AppStatus.DEAN_APPROVED]))
 
     result = await db.execute(q)
     apps = list(result.scalars().all())

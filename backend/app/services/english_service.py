@@ -81,10 +81,6 @@ class EnglishProficiencyService:
         review.reviewed_at = datetime.now(timezone.utc)
         await self.db.flush()
 
-        # Route the approved applicant straight to the Dean's pending queue.
-        # The intermediate DEPT_EVAL and ranking stages are auto-skipped in
-        # this demo (no Faculty Commission UI yet); the dean is the next
-        # decision-maker per UC-06-01.
         await self._app_svc.change_status(
             application_id, AppStatus.RANKING, reviewer_id, "English proficiency approved — sent to Dean's Office"
         )
