@@ -93,16 +93,19 @@ def _extract_transcript(text: str) -> dict[str, Any]:
 
     # GPA on a 4.0 scale
     gpa_m = _first([
+        # "Cumulative GPA (4.0 scale) 3.50" — optional "(X.X scale)" between label and value
         r"(?:AGNO|GANO|GPA|G\.P\.A\.|Genel A[gğ]ırlıklı Not|Overall GPA|Cumulative GPA)"
-        r"[:\s]+([\d.,]+)",
+        r"(?:\s*\([^)]*\))?\s*[:\s]+([\d.,]+)",
+        # "3.50 / 4.00" or "3.50/4.00"
         r"([\d.,]+)\s*/\s*4[.,]0",
     ], text)
     if gpa_m:
         result["gpa"] = round(_to_float(gpa_m.group(1)), 2)
 
-    # Completed credits — must say "Completed" to avoid matching Total
+    # Completed credits — handle both "Completed Credits" and "Total Credits Completed"
     completed_m = _first([
         r"(?:Tamamlanan Kredi|Alınan Kredi|Completed Credits?)[:\s]+([\d ]+)",
+        r"(?:Total Credits?\s+Completed|TOTAL COMPLETED CREDITS)[:\s]+([\d ]+)",
     ], text)
     if completed_m:
         result["completed_credits"] = _to_int(completed_m.group(1).strip())
@@ -111,6 +114,7 @@ def _extract_transcript(text: str) -> dict[str, Any]:
     total_m = _first([
         r"(?:Total Credits?|Mezuniyet İçin Gereken Kredi|Required Credits?|Total Program Credits?)"
         r"[:\s]+([\d ]+)",
+        r"(?:Total Credits?\s+Completed|TOTAL COMPLETED CREDITS)[:\s]+([\d ]+)",
     ], text)
     if total_m:
         result["total_credits"] = _to_int(total_m.group(1).strip())
@@ -118,6 +122,7 @@ def _extract_transcript(text: str) -> dict[str, Any]:
     # Institution — match a full line that ends with University/Üniversitesi
     inst_m = _first([
         r"^[ \t]*([^\n\r]+(?:Üniversitesi|University))[ \t]*$",
+        r"Institution\s*[:\s]+([^\n\r]+)",
     ], text, flags=re.IGNORECASE | re.MULTILINE)
     if inst_m:
         result["institution"] = inst_m.group(1).strip()
