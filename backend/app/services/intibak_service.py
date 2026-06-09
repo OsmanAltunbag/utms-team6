@@ -331,15 +331,15 @@ class IntibakService:
                 detail="No accepted transcript document found for this application.",
             )
 
-        # 2. Return cached result if already confirmed by the commission
-        if transcript_doc.extraction_confirmed and transcript_doc.extracted_data:
+        # 2. Return cached result only if it was produced by the transcript parser
+        #    (document_extractor stores gpa/credits/institution but never "courses")
+        cached = transcript_doc.extracted_data or {}
+        if transcript_doc.extraction_confirmed and "courses" in cached:
             return {
                 "document_id": str(transcript_doc.id),
-                "parser_strategy": transcript_doc.extracted_data.get(
-                    "parser_strategy", "cached"
-                ),
-                "warnings": transcript_doc.extracted_data.get("warnings", []),
-                "courses": transcript_doc.extracted_data.get("courses", []),
+                "parser_strategy": cached.get("parser_strategy", "cached"),
+                "warnings": cached.get("warnings", []),
+                "courses": cached.get("courses", []),
             }
 
         # 3. Download PDF binary from MinIO
