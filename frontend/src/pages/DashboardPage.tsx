@@ -1614,7 +1614,7 @@ function DeanApprovalQueuePanel() {
   async function loadQueue() {
     setLoading(true)
     try {
-      const data = await listStaffApplications({ status: 'DEAN_APPROVED' })
+      const data = await listStaffApplications({ status: 'RANKING' })
       setApps(data)
     } catch {
       toast.error('Failed to load dean-approved applications.')
@@ -1714,7 +1714,7 @@ function StudentAffairsOverview() {
         setStats({
           pending: all.filter(a => a.status === 'SUBMITTED').length,
           underReview: all.filter(a => a.status === 'UNDER_REVIEW').length,
-          awaitingAnnouncement: all.filter(a => a.status === 'DEAN_APPROVED').length,
+          awaitingAnnouncement: all.filter(a => a.status === 'RANKING').length,
           rejected: all.filter(a => a.status === 'REJECTED').length,
         })
         setRecent(all.slice(0, 5))
