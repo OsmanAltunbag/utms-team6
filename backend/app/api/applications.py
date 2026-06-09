@@ -42,8 +42,8 @@ _PIPELINE_STAGES = [
     {"name": "SUBMITTED",      "label_tr": "Başvuru Alındı",        "label_en": "Submitted"},
     {"name": "UNDER_REVIEW",   "label_tr": "Belge Doğrulama",       "label_en": "Document Verification"},
     {"name": "ENGLISH_REVIEW", "label_tr": "İngilizce Yeterliliği", "label_en": "English Proficiency"},
-    {"name": "RANKING",        "label_tr": "Dekanlık İncelemesi",   "label_en": "Dean's Review"},
-    {"name": "DEAN_APPROVED",  "label_tr": "YGK Sıralama",          "label_en": "Commission Ranking"},
+    {"name": "DEAN_APPROVED",  "label_tr": "Dekanlık İncelemesi",   "label_en": "Dean's Review"},
+    {"name": "RANKING",        "label_tr": "YGK Sıralama",          "label_en": "Commission Ranking"},
     {"name": "ANNOUNCED",      "label_tr": "Sonuç Açıklandı",       "label_en": "Result Announced"},
 ]
 _STAGE_NAMES = [s["name"] for s in _PIPELINE_STAGES]

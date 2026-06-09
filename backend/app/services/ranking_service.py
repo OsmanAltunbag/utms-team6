@@ -64,7 +64,7 @@ class RankingService:
             .where(
                 Application.program_id == program_id,
                 Application.period_id == period_id,
-                Application.status == AppStatus.DEAN_APPROVED,
+                Application.status == AppStatus.RANKING,
             )
         )
         apps = list(apps_result.scalars().all())

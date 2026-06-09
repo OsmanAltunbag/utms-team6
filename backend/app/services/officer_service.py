@@ -218,10 +218,10 @@ class OfficerApplicationService:
         app = await self._app_repo.get_by_id(application_id)
         if app is None:
             raise HTTPException(status_code=404, detail="Application not found")
-        if app.status != AppStatus.DEAN_APPROVED:
+        if app.status != AppStatus.RANKING:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Expected DEAN_APPROVED, got {app.status.value}",
+                detail=f"Expected RANKING, got {app.status.value}",
             )
 
         old_status = app.status.value

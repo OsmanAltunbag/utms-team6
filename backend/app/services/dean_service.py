@@ -77,8 +77,8 @@ class DeanOfficeService:
             )
             .where(
                 or_(
-                    Application.status == AppStatus.RANKING,
                     Application.status == AppStatus.DEAN_APPROVED,
+                    Application.status == AppStatus.RANKING,
                     Application.status == AppStatus.ANNOUNCED,
                     and_(
                         Application.status == AppStatus.REJECTED,
@@ -127,17 +127,17 @@ class DeanOfficeService:
         app = await self._app_repo.get_by_id(application_id)
         if app is None:
             raise HTTPException(status_code=404, detail="Application not found")
-        if app.status != AppStatus.RANKING:
+        if app.status != AppStatus.DEAN_APPROVED:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Expected RANKING, got {app.status.value}",
+                detail=f"Expected DEAN_APPROVED, got {app.status.value}",
             )
 
         await self._app_svc.change_status(
             application_id,
-            AppStatus.DEAN_APPROVED,
+            AppStatus.RANKING,
             approver_id,
-            "Dean's final approval — routed to Student Affairs for announcement",
+            "Dean's final approval — routed to Transfer Commission for ranking",
         )
 
         log = AuditLog(
@@ -145,10 +145,10 @@ class DeanOfficeService:
             action="DEAN_FINAL_APPROVED",
             entity_type="Application",
             entity_id=application_id,
-            old_value={"status": AppStatus.RANKING.value},
+            old_value={"status": AppStatus.DEAN_APPROVED.value},
             new_value={
-                "status": AppStatus.DEAN_APPROVED.value,
-                "routed_to": "STUDENT_AFFAIRS",
+                "status": AppStatus.RANKING.value,
+                "routed_to": "TRANSFER_COMMISSION",
                 "ip_address": ip_address,
                 "approved_at": datetime.now(timezone.utc).isoformat(),
             },
@@ -182,10 +182,10 @@ class DeanOfficeService:
         app = await self._app_repo.get_by_id(application_id)
         if app is None:
             raise HTTPException(status_code=404, detail="Application not found")
-        if app.status != AppStatus.RANKING:
+        if app.status != AppStatus.DEAN_APPROVED:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Expected RANKING, got {app.status.value}",
+                detail=f"Expected DEAN_APPROVED, got {app.status.value}",
             )
 
         rejection_reason = DEAN_REJECTION_LABELS[rejection_code]
@@ -205,7 +205,7 @@ class DeanOfficeService:
             action="DEAN_FINAL_REJECTED",
             entity_type="Application",
             entity_id=application_id,
-            old_value={"status": AppStatus.RANKING.value},
+            old_value={"status": AppStatus.DEAN_APPROVED.value},
             new_value={
                 "status": AppStatus.REJECTED.value,
                 "rejection_code": rejection_code,

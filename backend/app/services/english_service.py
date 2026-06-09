@@ -82,7 +82,7 @@ class EnglishProficiencyService:
         await self.db.flush()
 
         await self._app_svc.change_status(
-            application_id, AppStatus.RANKING, reviewer_id, "English proficiency approved — sent to Dean's Office"
+            application_id, AppStatus.DEAN_APPROVED, reviewer_id, "English proficiency approved — sent to Dean's Office"
         )
 
         log = AuditLog(
@@ -91,7 +91,7 @@ class EnglishProficiencyService:
             entity_type="Application",
             entity_id=application_id,
             old_value={"status": AppStatus.ENGLISH_REVIEW.value},
-            new_value={"status": AppStatus.RANKING.value, "exam_type": exam_type, "exam_score": exam_score},
+            new_value={"status": AppStatus.DEAN_APPROVED.value, "exam_type": exam_type, "exam_score": exam_score},
         )
         self.db.add(log)
         await self.db.flush()

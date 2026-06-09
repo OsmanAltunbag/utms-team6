@@ -77,9 +77,9 @@ async def list_applications_for_dean(
 
     def dean_status(a) -> str:
         # Frontend-friendly badge: maps internal status to dean-cycle wording
-        if a.status == AppStatus.RANKING:
+        if a.status == AppStatus.DEAN_APPROVED:
             return "Pending"
-        if a.status in (AppStatus.DEAN_APPROVED, AppStatus.ANNOUNCED):
+        if a.status in (AppStatus.RANKING, AppStatus.ANNOUNCED):
             return "Approved"
         if a.status == AppStatus.REJECTED:
             return "Rejected"
@@ -132,7 +132,7 @@ async def get_application_detail(
     review = app.english_proficiency_review
 
     def dean_status(s: AppStatus) -> str:
-        if s == AppStatus.RANKING:    return "Pending"
+        if s == AppStatus.DEAN_APPROVED: return "Pending"
         if s in (AppStatus.DEAN_APPROVED, AppStatus.ANNOUNCED):  return "Approved"
         if s == AppStatus.REJECTED:   return "Rejected"
         return s.value
